@@ -37,22 +37,24 @@ You should see: `"AnkiConnect v.6"`
 
 ## Installation
 
-### Using uv (Recommended)
+### Option 1: Using uv (Recommended)
+
+**uv** is a fast Python package manager. If you don't have it, [install it first](https://docs.astral.sh/uv/).
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/jbkroner/anki-mcp.git
 cd anki-mcp
 
-# Install dependencies
+# Install dependencies and create virtual environment
 uv sync
 ```
 
-### Using pip
+### Option 2: Using pip
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/jbkroner/anki-mcp.git
 cd anki-mcp
 
 # Create virtual environment
@@ -72,6 +74,8 @@ Add this to your Claude Desktop configuration file:
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
+#### If installed with uv:
+
 ```json
 {
   "mcpServers": {
@@ -81,9 +85,7 @@ Add this to your Claude Desktop configuration file:
         "run",
         "--directory",
         "/absolute/path/to/anki-mcp",
-        "python",
-        "-m",
-        "anki_mcp.server"
+        "anki-mcp-server"
       ]
     }
   }
@@ -92,16 +94,14 @@ Add this to your Claude Desktop configuration file:
 
 Replace `/absolute/path/to/anki-mcp` with the actual path to this directory.
 
-### Alternative Configuration (Using pip/venv)
-
-If you're not using uv:
+#### If installed with pip/venv:
 
 ```json
 {
   "mcpServers": {
     "anki": {
-      "command": "/absolute/path/to/anki-mcp/venv/bin/python",
-      "args": ["-m", "anki_mcp.server"]
+      "command": "/absolute/path/to/anki-mcp/.venv/bin/anki-mcp-server",
+      "args": []
     }
   }
 }

@@ -386,8 +386,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )]
 
 
-async def main():
-    """Run the MCP server."""
+async def async_main():
+    """Run the MCP server (async)."""
     async with stdio_server() as (read_stream, write_stream):
         await app.run(
             read_stream,
@@ -396,5 +396,10 @@ async def main():
         )
 
 
+def main():
+    """Entry point for console script."""
+    asyncio.run(async_main())
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

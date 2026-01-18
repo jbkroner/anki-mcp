@@ -22,6 +22,9 @@ dev = [
     "pytest-asyncio>=0.23.0",
 ]
 
+[project.scripts]
+anki-mcp-server = "anki_mcp.server:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/anki_mcp"]
 
