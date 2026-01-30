@@ -230,6 +230,211 @@ async def list_tools() -> list[Tool]:
                 "required": []
             }
         ),
+        # Phase 2: Card state management tools
+        Tool(
+            name="suspend_cards",
+            description="Suspend cards to exclude them from reviews. Suspended cards won't appear in study sessions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs to suspend"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find cards to suspend (alternative to card_ids)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="unsuspend_cards",
+            description="Unsuspend cards to include them in reviews again.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs to unsuspend"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find cards to unsuspend (alternative to card_ids)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_suspended_cards",
+            description="List all suspended cards, optionally filtered by deck.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Optional deck name to filter results"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum cards to return (default: 50)",
+                        "default": 50
+                    }
+                },
+                "required": []
+            }
+        ),
+        # Phase 3: Content management tools
+        Tool(
+            name="update_note",
+            description="Update the content of an existing note's fields.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_id": {
+                        "type": "integer",
+                        "description": "The note ID to update"
+                    },
+                    "fields": {
+                        "type": "object",
+                        "description": "Dictionary of field names to new values (e.g., {'Front': 'new question', 'Back': 'new answer'})"
+                    }
+                },
+                "required": ["note_id", "fields"]
+            }
+        ),
+        Tool(
+            name="delete_notes",
+            description="Permanently delete notes and all their associated cards. This action cannot be undone!",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of note IDs to delete"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to confirm deletion"
+                    }
+                },
+                "required": ["note_ids", "confirm"]
+            }
+        ),
+        Tool(
+            name="move_cards",
+            description="Move cards to a different deck.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs to move"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find cards to move (alternative to card_ids)"
+                    },
+                    "target_deck": {
+                        "type": "string",
+                        "description": "Destination deck name"
+                    }
+                },
+                "required": ["target_deck"]
+            }
+        ),
+        Tool(
+            name="remove_tags",
+            description="Remove tags from notes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of note IDs"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find notes (alternative to note_ids)"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of tags to remove"
+                    }
+                },
+                "required": ["tags"]
+            }
+        ),
+        # Phase 4: Scheduling and bulk operations
+        Tool(
+            name="get_due_cards",
+            description="Find cards that are due for review.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Optional deck name to filter"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum cards to return (default: 50)",
+                        "default": 50
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="reset_card_progress",
+            description="Reset cards to 'new' state, removing all review history. Useful for relearning material.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs to reset"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find cards to reset (alternative to card_ids)"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to confirm reset"
+                    }
+                },
+                "required": ["confirm"]
+            }
+        ),
+        Tool(
+            name="set_ease_factor",
+            description="Adjust the ease factor for cards. Higher ease = longer intervals between reviews.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs"
+                    },
+                    "ease": {
+                        "type": "integer",
+                        "description": "New ease factor in permille (e.g., 2500 = 250%). Range: 1300-5000 recommended."
+                    }
+                },
+                "required": ["card_ids", "ease"]
+            }
+        ),
     ]
 
 
@@ -578,6 +783,266 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(
                 type="text",
                 text="\n".join(result_parts)
+            )]
+
+        # Phase 2: Card state management handlers
+        elif name == "suspend_cards":
+            card_ids = arguments.get("card_ids", [])
+            query = arguments.get("query")
+
+            if not card_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'card_ids' or 'query' parameter"
+                )]
+
+            if query:
+                card_ids = await anki.find_cards(query)
+                if not card_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No cards found matching query: {query}"
+                    )]
+
+            await anki.suspend(card_ids)
+            return [TextContent(
+                type="text",
+                text=f"✓ Suspended {len(card_ids)} card(s)"
+            )]
+
+        elif name == "unsuspend_cards":
+            card_ids = arguments.get("card_ids", [])
+            query = arguments.get("query")
+
+            if not card_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'card_ids' or 'query' parameter"
+                )]
+
+            if query:
+                card_ids = await anki.find_cards(query)
+                if not card_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No cards found matching query: {query}"
+                    )]
+
+            await anki.unsuspend(card_ids)
+            return [TextContent(
+                type="text",
+                text=f"✓ Unsuspended {len(card_ids)} card(s)"
+            )]
+
+        elif name == "get_suspended_cards":
+            deck = arguments.get("deck")
+            limit = arguments.get("limit", 50)
+
+            query = "is:suspended"
+            if deck:
+                query = f'deck:"{deck}" is:suspended'
+
+            card_ids = await anki.find_cards(query)
+
+            if not card_ids:
+                deck_str = f" in '{deck}'" if deck else ""
+                return [TextContent(
+                    type="text",
+                    text=f"No suspended cards found{deck_str}."
+                )]
+
+            card_ids = card_ids[:limit]
+            cards = await anki.cards_info(card_ids)
+
+            deck_str = f" in '{deck}'" if deck else ""
+            result_parts = [f"Found {len(cards)} suspended cards{deck_str}:\n"]
+
+            for card in cards:
+                question = card.get('question', '')[:60]
+                question = re.sub(r'<[^>]+>', '', question)
+                result_parts.append(f"- Card ID {card.get('cardId')}: {question}")
+                result_parts.append(f"  Deck: {card.get('deckName')}")
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        # Phase 3: Content management handlers
+        elif name == "update_note":
+            note_id = arguments["note_id"]
+            fields = arguments["fields"]
+
+            await anki.update_note_fields(note_id, fields)
+
+            field_names = ", ".join(fields.keys())
+            return [TextContent(
+                type="text",
+                text=f"✓ Updated note {note_id} (fields: {field_names})"
+            )]
+
+        elif name == "delete_notes":
+            note_ids = arguments["note_ids"]
+            confirm = arguments.get("confirm", False)
+
+            if not confirm:
+                return [TextContent(
+                    type="text",
+                    text=f"⚠ Deletion cancelled. To delete {len(note_ids)} note(s), set confirm=true.\nThis action cannot be undone!"
+                )]
+
+            await anki.delete_notes(note_ids)
+            return [TextContent(
+                type="text",
+                text=f"✓ Deleted {len(note_ids)} note(s) and their associated cards"
+            )]
+
+        elif name == "move_cards":
+            card_ids = arguments.get("card_ids", [])
+            query = arguments.get("query")
+            target_deck = arguments["target_deck"]
+
+            if not card_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'card_ids' or 'query' parameter"
+                )]
+
+            if query:
+                card_ids = await anki.find_cards(query)
+                if not card_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No cards found matching query: {query}"
+                    )]
+
+            # Ensure target deck exists
+            try:
+                await anki.create_deck(target_deck)
+            except AnkiConnectError:
+                pass
+
+            await anki.change_deck(card_ids, target_deck)
+            return [TextContent(
+                type="text",
+                text=f"✓ Moved {len(card_ids)} card(s) to '{target_deck}'"
+            )]
+
+        elif name == "remove_tags":
+            note_ids = arguments.get("note_ids", [])
+            query = arguments.get("query")
+            tags = arguments["tags"]
+
+            if not note_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'note_ids' or 'query' parameter"
+                )]
+
+            if query:
+                note_ids = await anki.find_notes(query)
+                if not note_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No notes found matching query: {query}"
+                    )]
+
+            tags_str = " ".join(tags)
+            await anki.remove_tags(note_ids, tags_str)
+            return [TextContent(
+                type="text",
+                text=f"✓ Removed tags [{', '.join(tags)}] from {len(note_ids)} note(s)"
+            )]
+
+        # Phase 4: Scheduling handlers
+        elif name == "get_due_cards":
+            deck = arguments.get("deck")
+            limit = arguments.get("limit", 50)
+
+            query = "is:due"
+            if deck:
+                query = f'deck:"{deck}" is:due'
+
+            card_ids = await anki.find_cards(query)
+
+            if not card_ids:
+                deck_str = f" in '{deck}'" if deck else ""
+                return [TextContent(
+                    type="text",
+                    text=f"No cards due for review{deck_str}."
+                )]
+
+            card_ids = card_ids[:limit]
+            cards = await anki.cards_info(card_ids)
+
+            deck_str = f" in '{deck}'" if deck else ""
+            result_parts = [f"Found {len(cards)} cards due for review{deck_str}:\n"]
+
+            for card in cards:
+                question = card.get('question', '')[:50]
+                question = re.sub(r'<[^>]+>', '', question)
+                interval = card.get('interval', 0)
+                due = card.get('due', 0)
+                result_parts.append(f"- {question}")
+                result_parts.append(f"  Card ID: {card.get('cardId')} | Interval: {interval}d | Deck: {card.get('deckName')}")
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "reset_card_progress":
+            card_ids = arguments.get("card_ids", [])
+            query = arguments.get("query")
+            confirm = arguments.get("confirm", False)
+
+            if not card_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'card_ids' or 'query' parameter"
+                )]
+
+            if query:
+                card_ids = await anki.find_cards(query)
+                if not card_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No cards found matching query: {query}"
+                    )]
+
+            if not confirm:
+                return [TextContent(
+                    type="text",
+                    text=f"⚠ Reset cancelled. To reset {len(card_ids)} card(s) to new state, set confirm=true.\nThis will remove all review history!"
+                )]
+
+            await anki.forget_cards(card_ids)
+            return [TextContent(
+                type="text",
+                text=f"✓ Reset {len(card_ids)} card(s) to new state"
+            )]
+
+        elif name == "set_ease_factor":
+            card_ids = arguments["card_ids"]
+            ease = arguments["ease"]
+
+            # Validate ease range
+            if ease < 1000 or ease > 9999:
+                return [TextContent(
+                    type="text",
+                    text="Error: Ease factor must be between 1000 and 9999 (1300-5000 recommended)"
+                )]
+
+            # Set same ease for all cards
+            ease_factors = [ease] * len(card_ids)
+            results = await anki.set_ease_factors(card_ids, ease_factors)
+
+            success_count = sum(1 for r in results if r)
+            ease_percent = ease / 10
+
+            return [TextContent(
+                type="text",
+                text=f"✓ Set ease factor to {ease_percent:.0f}% for {success_count}/{len(card_ids)} card(s)"
             )]
 
         else:

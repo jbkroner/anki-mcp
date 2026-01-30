@@ -129,6 +129,20 @@ class MockAnkiConnect:
             "findCards": self._find_cards,
             "cardsInfo": self._cards_info,
             "getIntervals": self._get_intervals,
+            # Phase 2: Card state management
+            "suspend": self._suspend,
+            "unsuspend": self._unsuspend,
+            "areSuspended": self._are_suspended,
+            "areBuried": self._are_buried,
+            # Phase 3: Content management
+            "updateNoteFields": self._update_note_fields,
+            "deleteNotes": self._delete_notes,
+            "changeDeck": self._change_deck,
+            "removeTags": self._remove_tags,
+            # Phase 4: Scheduling
+            "forgetCards": self._forget_cards,
+            "setEaseFactors": self._set_ease_factors,
+            "getEaseFactors": self._get_ease_factors,
         }
 
         handler = handlers.get(action)
@@ -411,6 +425,11 @@ class MockAnkiConnect:
             if not card.buried:
                 return False
 
+        # Handle is:due (cards in review queue with due <= 0)
+        if "is:due" in query_lower:
+            if card.queue != 2 or card.due > 0:
+                return False
+
         return True
 
     def _cards_info(self, params: dict) -> list[dict]:
@@ -455,6 +474,125 @@ class MockAnkiConnect:
 
         return results
 
+    # Phase 2: Card state management methods
+
+    def _suspend(self, params: dict) -> bool:
+        card_ids = params["cards"]
+        for card_id in card_ids:
+            if card_id in self.state.cards:
+                self.state.cards[card_id].suspended = True
+        return True
+
+    def _unsuspend(self, params: dict) -> bool:
+        card_ids = params["cards"]
+        for card_id in card_ids:
+            if card_id in self.state.cards:
+                self.state.cards[card_id].suspended = False
+        return True
+
+    def _are_suspended(self, params: dict) -> list[bool]:
+        card_ids = params["cards"]
+        return [
+            self.state.cards[cid].suspended if cid in self.state.cards else False
+            for cid in card_ids
+        ]
+
+    def _are_buried(self, params: dict) -> list[bool]:
+        card_ids = params["cards"]
+        return [
+            self.state.cards[cid].buried if cid in self.state.cards else False
+            for cid in card_ids
+        ]
+
+    # Phase 3: Content management methods
+
+    def _update_note_fields(self, params: dict) -> None:
+        note_data = params["note"]
+        note_id = note_data["id"]
+        fields = note_data["fields"]
+
+        if note_id in self.state.notes:
+            self.state.notes[note_id].fields.update(fields)
+            # Update card question/answer if Front/Back changed
+            for card in self.state.cards.values():
+                if card.note_id == note_id:
+                    if "Front" in fields:
+                        card.question = fields["Front"]
+                    if "Back" in fields:
+                        card.answer = fields["Back"]
+
+    def _delete_notes(self, params: dict) -> None:
+        note_ids = params["notes"]
+        for note_id in note_ids:
+            if note_id in self.state.notes:
+                del self.state.notes[note_id]
+            # Also delete associated cards
+            cards_to_delete = [
+                cid for cid, card in self.state.cards.items()
+                if card.note_id == note_id
+            ]
+            for card_id in cards_to_delete:
+                del self.state.cards[card_id]
+
+    def _change_deck(self, params: dict) -> None:
+        card_ids = params["cards"]
+        deck_name = params["deck"]
+
+        # Ensure deck exists
+        if deck_name not in self.state.decks:
+            self._create_deck({"deck": deck_name})
+
+        for card_id in card_ids:
+            if card_id in self.state.cards:
+                self.state.cards[card_id].deck_name = deck_name
+
+    def _remove_tags(self, params: dict) -> None:
+        note_ids = params["notes"]
+        tags_str = params["tags"]
+        tags_to_remove = set(tags_str.split())
+
+        for note_id in note_ids:
+            if note_id in self.state.notes:
+                self.state.notes[note_id].tags = [
+                    t for t in self.state.notes[note_id].tags
+                    if t not in tags_to_remove
+                ]
+
+    # Phase 4: Scheduling methods
+
+    def _forget_cards(self, params: dict) -> None:
+        card_ids = params["cards"]
+        for card_id in card_ids:
+            if card_id in self.state.cards:
+                card = self.state.cards[card_id]
+                card.queue = 0  # New
+                card.type = 0
+                card.interval = 0
+                card.factor = 2500  # Reset to default ease
+                card.lapses = 0
+                card.due = 0
+
+    def _set_ease_factors(self, params: dict) -> list[bool]:
+        card_ids = params["cards"]
+        ease_factors = params["easeFactors"]
+        results = []
+
+        for card_id, ease in zip(card_ids, ease_factors):
+            if card_id in self.state.cards:
+                self.state.cards[card_id].factor = ease
+                results.append(True)
+            else:
+                results.append(False)
+
+        return results
+
+    def _get_ease_factors(self, params: dict) -> list[int]:
+        card_ids = params["cards"]
+        return [
+            self.state.cards[cid].factor if cid in self.state.cards else 0
+            for cid in card_ids
+        ]
+
     # Helper methods for test setup
 
     def add_problem_card(self, deck_name: str, low_ease: bool = False, high_lapses: bool = False):
@@ -487,6 +625,72 @@ class MockAnkiConnect:
             lapses=5 if high_lapses else 0,
             interval=10,
             queue=2  # Review queue
+        )
+        self.state.cards[card_id] = card
+
+        return card_id
+
+    def add_due_card(self, deck_name: str) -> int:
+        """Add a card that is due for review."""
+        self._create_deck({"deck": deck_name})
+
+        note_id = self.state.next_note_id
+        self.state.next_note_id += 1
+
+        note = MockNote(
+            note_id=note_id,
+            deck_name=deck_name,
+            model_name="Basic",
+            fields={"Front": f"Due Q {note_id}", "Back": f"Due A {note_id}"},
+            tags=["due-card"]
+        )
+        self.state.notes[note_id] = note
+
+        card_id = self.state.next_card_id
+        self.state.next_card_id += 1
+
+        card = MockCard(
+            card_id=card_id,
+            note_id=note_id,
+            deck_name=deck_name,
+            question=f"Due Q {note_id}",
+            answer=f"Due A {note_id}",
+            factor=2500,
+            lapses=0,
+            interval=10,
+            queue=2,  # Review queue
+            due=0  # Due now (0 or negative means due)
+        )
+        self.state.cards[card_id] = card
+
+        return card_id
+
+    def add_suspended_card(self, deck_name: str) -> int:
+        """Add a suspended card for testing."""
+        self._create_deck({"deck": deck_name})
+
+        note_id = self.state.next_note_id
+        self.state.next_note_id += 1
+
+        note = MockNote(
+            note_id=note_id,
+            deck_name=deck_name,
+            model_name="Basic",
+            fields={"Front": f"Suspended Q {note_id}", "Back": f"Suspended A {note_id}"},
+            tags=["suspended-card"]
+        )
+        self.state.notes[note_id] = note
+
+        card_id = self.state.next_card_id
+        self.state.next_card_id += 1
+
+        card = MockCard(
+            card_id=card_id,
+            note_id=note_id,
+            deck_name=deck_name,
+            question=f"Suspended Q {note_id}",
+            answer=f"Suspended A {note_id}",
+            suspended=True
         )
         self.state.cards[card_id] = card
 
