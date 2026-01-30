@@ -1,29 +1,21 @@
 """Tests for card statistics functionality.
 
-NOTE: These tests require Anki to be running with AnkiConnect installed.
-They are integration tests and will create/modify test decks in your Anki collection.
+These tests use a mock AnkiConnect server and can run in CI without Anki.
 """
 
 import pytest
 from anki_mcp.anki_client import AnkiClient, AnkiConnectError
 
 
-# Mark all tests in this module as requiring Anki
+# Mark all tests in this module as async
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture
-async def anki_client():
-    """Create and cleanup an AnkiClient instance."""
-    client = AnkiClient()
-    yield client
-    await client.close()
-
-
-@pytest.fixture
-def test_deck_name():
-    """Provide a consistent test deck name."""
-    return "MCPTest::StatsTestDeck"
+# Fixtures are provided by conftest.py:
+# - anki_client: AnkiClient connected to mock server
+# - test_deck_name: consistent test deck name
+# - mock_anki_server: the mock server instance
+# - mock_state: direct access to mock state
 
 
 class TestDeckStats:
@@ -166,3 +158,40 @@ class TestIntervals:
 
         assert isinstance(intervals, list)
         assert len(intervals) == len(card_ids)
+
+
+class TestProblemCards:
+    async def test_find_low_ease_cards(self, anki_client, mock_anki_server, test_deck_name):
+        """Test finding cards with low ease factor."""
+        # Add a problem card with low ease
+        mock_anki_server.add_problem_card(test_deck_name, low_ease=True)
+
+        # Search for low ease cards
+        card_ids = await anki_client.find_cards(f'deck:"{test_deck_name}" prop:ease<2')
+
+        assert isinstance(card_ids, list)
+        assert len(card_ids) >= 1
+
+    async def test_find_high_lapse_cards(self, anki_client, mock_anki_server, test_deck_name):
+        """Test finding cards with high lapse count."""
+        # Add a problem card with high lapses
+        mock_anki_server.add_problem_card(test_deck_name, high_lapses=True)
+
+        # Search for high lapse cards
+        card_ids = await anki_client.find_cards(f'deck:"{test_deck_name}" prop:lapses>=4')
+
+        assert isinstance(card_ids, list)
+        assert len(card_ids) >= 1
+
+    async def test_problem_card_info(self, anki_client, mock_anki_server, test_deck_name):
+        """Test getting info for problem cards."""
+        # Add a problem card
+        card_id = mock_anki_server.add_problem_card(test_deck_name, low_ease=True, high_lapses=True)
+
+        # Get card info
+        cards = await anki_client.cards_info([card_id])
+
+        assert len(cards) == 1
+        card = cards[0]
+        assert card['factor'] == 1500  # Low ease
+        assert card['lapses'] == 5  # High lapses

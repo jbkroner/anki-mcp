@@ -1,29 +1,21 @@
 """Tests for AnkiConnect client.
 
-NOTE: These tests require Anki to be running with AnkiConnect installed.
-They are integration tests and will create/modify test decks in your Anki collection.
+These tests use a mock AnkiConnect server and can run in CI without Anki.
 """
 
 import pytest
 from anki_mcp.anki_client import AnkiClient, AnkiConnectError
 
 
-# Mark all tests in this module as requiring Anki
+# Mark all tests in this module as async
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture
-async def anki_client():
-    """Create and cleanup an AnkiClient instance."""
-    client = AnkiClient()
-    yield client
-    await client.close()
-
-
-@pytest.fixture
-def test_deck_name():
-    """Provide a consistent test deck name."""
-    return "MCPTest::TestDeck"
+# Fixtures are provided by conftest.py:
+# - anki_client: AnkiClient connected to mock server
+# - test_deck_name: consistent test deck name
+# - mock_anki_server: the mock server instance
+# - mock_state: direct access to mock state
 
 
 class TestHealthCheck:
