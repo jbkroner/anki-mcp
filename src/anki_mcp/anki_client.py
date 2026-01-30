@@ -200,3 +200,81 @@ class AnkiClient:
     async def gui_add_cards(self) -> None:
         """Open the Add Cards dialog in Anki."""
         await self._invoke("guiAddCards")
+
+    # Statistics and card info methods
+
+    async def get_deck_stats(self, deck_names: list[str]) -> dict:
+        """
+        Get statistics for specified decks.
+
+        Args:
+            deck_names: List of deck names to get stats for
+
+        Returns:
+            Dictionary with deck IDs as keys and stats as values.
+            Each stats dict contains: new_count, learn_count, review_count, total_in_deck
+        """
+        return await self._invoke("getDeckStats", decks=deck_names)
+
+    async def get_num_cards_reviewed_today(self) -> int:
+        """Get the number of cards reviewed today."""
+        return await self._invoke("getNumCardsReviewedToday")
+
+    async def get_num_cards_reviewed_by_day(self) -> list[list]:
+        """
+        Get review counts by day.
+
+        Returns:
+            List of [days_ago, review_count] pairs
+        """
+        return await self._invoke("getNumCardsReviewedByDay")
+
+    async def get_collection_stats_html(self, whole_collection: bool = True) -> str:
+        """
+        Get collection statistics as HTML.
+
+        Args:
+            whole_collection: If True, get stats for whole collection; otherwise current deck
+
+        Returns:
+            HTML string with statistics
+        """
+        return await self._invoke("getCollectionStatsHTML", wholeCollection=whole_collection)
+
+    async def find_cards(self, query: str) -> list[int]:
+        """
+        Search for cards using Anki search syntax.
+
+        Args:
+            query: Anki search query (e.g., "deck:Spanish is:due")
+
+        Returns:
+            List of card IDs matching the query
+        """
+        return await self._invoke("findCards", query=query)
+
+    async def cards_info(self, card_ids: list[int]) -> list[dict]:
+        """
+        Get detailed information about specific cards.
+
+        Args:
+            card_ids: List of card IDs
+
+        Returns:
+            List of card information dictionaries containing fields like:
+            cardId, deckName, due, factor, interval, lapses, queue, type, etc.
+        """
+        return await self._invoke("cardsInfo", cards=card_ids)
+
+    async def get_intervals(self, card_ids: list[int], complete: bool = False) -> list:
+        """
+        Get intervals for cards.
+
+        Args:
+            card_ids: List of card IDs
+            complete: If True, return all historical intervals; if False, just current
+
+        Returns:
+            List of intervals (or list of interval lists if complete=True)
+        """
+        return await self._invoke("getIntervals", cards=card_ids, complete=complete)

@@ -1,6 +1,7 @@
 """MCP server for Anki integration."""
 
 import asyncio
+import re
 from typing import Optional
 
 from mcp.server import Server
@@ -177,6 +178,55 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {},
+                "required": []
+            }
+        ),
+        # Statistics tools
+        Tool(
+            name="get_deck_stats",
+            description="Get statistics for a deck including new, learning, and review card counts.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Deck name to get statistics for"
+                    }
+                },
+                "required": ["deck"]
+            }
+        ),
+        Tool(
+            name="get_collection_stats",
+            description="Get overall collection statistics including cards reviewed today and review history.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_problem_cards",
+            description="Find cards that may need attention: low ease factor, high lapse count, or long intervals. Useful for identifying struggling cards.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Optional deck name to filter. Searches all decks if not specified."
+                    },
+                    "criteria": {
+                        "type": "string",
+                        "enum": ["low_ease", "high_lapses", "all"],
+                        "description": "Type of problem cards to find. 'low_ease' finds cards with ease < 2.0, 'high_lapses' finds cards with 4+ lapses, 'all' finds both.",
+                        "default": "all"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of cards to return (default: 20)",
+                        "default": 20
+                    }
+                },
                 "required": []
             }
         ),
@@ -366,6 +416,168 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(
                 type="text",
                 text="✓ Anki collection synchronized with AnkiWeb"
+            )]
+
+        elif name == "get_deck_stats":
+            deck = arguments["deck"]
+            stats = await anki.get_deck_stats([deck])
+
+            if not stats:
+                return [TextContent(
+                    type="text",
+                    text=f"No statistics found for deck '{deck}'. Use list_decks to see available decks."
+                )]
+
+            # Stats are keyed by deck ID, get the first (and only) one
+            deck_stats = list(stats.values())[0]
+
+            result_parts = [
+                f"Statistics for '{deck}':",
+                f"  New cards: {deck_stats.get('new_count', 0)}",
+                f"  Learning: {deck_stats.get('learn_count', 0)}",
+                f"  Review: {deck_stats.get('review_count', 0)}",
+                f"  Total in deck: {deck_stats.get('total_in_deck', 0)}"
+            ]
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_collection_stats":
+            # Get cards reviewed today
+            reviewed_today = await anki.get_num_cards_reviewed_today()
+
+            # Get review history (last 30 days)
+            review_history = await anki.get_num_cards_reviewed_by_day()
+
+            # Get all decks and their stats
+            decks = await anki.deck_names()
+            all_stats = await anki.get_deck_stats(decks)
+
+            # Calculate totals
+            total_new = 0
+            total_learning = 0
+            total_review = 0
+            total_cards = 0
+
+            for deck_stat in all_stats.values():
+                total_new += deck_stat.get('new_count', 0)
+                total_learning += deck_stat.get('learn_count', 0)
+                total_review += deck_stat.get('review_count', 0)
+                total_cards += deck_stat.get('total_in_deck', 0)
+
+            # Calculate recent review stats
+            recent_reviews = review_history[:7] if review_history else []
+            week_total = sum(day[1] for day in recent_reviews) if recent_reviews else 0
+            week_avg = week_total / 7 if recent_reviews else 0
+
+            result_parts = [
+                "Collection Statistics:",
+                f"  Total cards: {total_cards}",
+                f"  Due today: {total_review}",
+                f"  New available: {total_new}",
+                f"  Currently learning: {total_learning}",
+                f"",
+                f"Review Activity:",
+                f"  Reviewed today: {reviewed_today}",
+                f"  Last 7 days: {week_total}",
+                f"  Daily average (7d): {week_avg:.1f}",
+                f"  Total decks: {len(decks)}"
+            ]
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_problem_cards":
+            deck = arguments.get("deck")
+            criteria = arguments.get("criteria", "all")
+            limit = arguments.get("limit", 20)
+
+            # Build search query
+            base_query = f'deck:"{deck}"' if deck else ""
+
+            problem_cards = []
+
+            # Find cards with low ease (factor < 2000 means ease < 200% or 2.0)
+            if criteria in ("low_ease", "all"):
+                query = f"{base_query} prop:ease<2".strip()
+                low_ease_ids = await anki.find_cards(query)
+                if low_ease_ids:
+                    cards_info = await anki.cards_info(low_ease_ids[:limit])
+                    for card in cards_info:
+                        ease = card.get('factor', 0) / 1000  # Convert from permille
+                        problem_cards.append({
+                            'card_id': card.get('cardId'),
+                            'note_id': card.get('note'),
+                            'deck': card.get('deckName'),
+                            'issue': 'low_ease',
+                            'ease': ease,
+                            'lapses': card.get('lapses', 0),
+                            'interval': card.get('interval', 0),
+                            'question': card.get('question', '')[:80]
+                        })
+
+            # Find cards with high lapses (4 or more)
+            if criteria in ("high_lapses", "all"):
+                query = f"{base_query} prop:lapses>=4".strip()
+                high_lapse_ids = await anki.find_cards(query)
+                if high_lapse_ids:
+                    # Avoid duplicates if we already have low_ease cards
+                    existing_ids = {c['card_id'] for c in problem_cards}
+                    new_ids = [cid for cid in high_lapse_ids if cid not in existing_ids]
+
+                    if new_ids:
+                        cards_info = await anki.cards_info(new_ids[:limit])
+                        for card in cards_info:
+                            ease = card.get('factor', 0) / 1000
+                            problem_cards.append({
+                                'card_id': card.get('cardId'),
+                                'note_id': card.get('note'),
+                                'deck': card.get('deckName'),
+                                'issue': 'high_lapses',
+                                'ease': ease,
+                                'lapses': card.get('lapses', 0),
+                                'interval': card.get('interval', 0),
+                                'question': card.get('question', '')[:80]
+                            })
+
+            # Limit total results
+            problem_cards = problem_cards[:limit]
+
+            if not problem_cards:
+                deck_str = f" in '{deck}'" if deck else ""
+                return [TextContent(
+                    type="text",
+                    text=f"No problem cards found{deck_str}. Your cards are doing well!"
+                )]
+
+            # Format results
+            deck_str = f" in '{deck}'" if deck else ""
+            result_parts = [f"Found {len(problem_cards)} problem cards{deck_str}:\n"]
+
+            for card in problem_cards:
+                # Clean HTML from question
+                question = card['question'].replace('<br>', ' ').replace('<br/>', ' ')
+                # Simple HTML tag removal
+                import re
+                question = re.sub(r'<[^>]+>', '', question)
+                question = question[:60] + "..." if len(question) > 60 else question
+
+                issue_str = "low ease" if card['issue'] == 'low_ease' else "high lapses"
+                result_parts.append(
+                    f"- [{issue_str}] ease={card['ease']:.2f}, lapses={card['lapses']}, "
+                    f"interval={card['interval']}d"
+                )
+                result_parts.append(f"  Q: {question}")
+                result_parts.append(f"  Card ID: {card['card_id']} | Deck: {card['deck']}")
+                result_parts.append("")
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
             )]
 
         else:
