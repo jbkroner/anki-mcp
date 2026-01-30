@@ -1,6 +1,7 @@
 """MCP server for Anki integration."""
 
 import asyncio
+import re
 from typing import Optional
 
 from mcp.server import Server
@@ -177,6 +178,323 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {},
+                "required": []
+            }
+        ),
+        # Statistics tools
+        Tool(
+            name="get_deck_stats",
+            description="Get statistics for a deck including new, learning, and review card counts.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Deck name to get statistics for"
+                    }
+                },
+                "required": ["deck"]
+            }
+        ),
+        Tool(
+            name="get_collection_stats",
+            description="Get overall collection statistics including cards reviewed today and review history.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_problem_cards",
+            description="Find cards that may need attention: low ease factor, high lapse count, or long intervals. Useful for identifying struggling cards.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Optional deck name to filter. Searches all decks if not specified."
+                    },
+                    "criteria": {
+                        "type": "string",
+                        "enum": ["low_ease", "high_lapses", "all"],
+                        "description": "Type of problem cards to find. 'low_ease' finds cards with ease < 2.0, 'high_lapses' finds cards with 4+ lapses, 'all' finds both.",
+                        "default": "all"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of cards to return (default: 20)",
+                        "default": 20
+                    }
+                },
+                "required": []
+            }
+        ),
+        # Phase 2: Card state management tools
+        Tool(
+            name="suspend_cards",
+            description="Suspend cards to exclude them from reviews. Suspended cards won't appear in study sessions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs to suspend"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find cards to suspend (alternative to card_ids)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="unsuspend_cards",
+            description="Unsuspend cards to include them in reviews again.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs to unsuspend"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find cards to unsuspend (alternative to card_ids)"
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_suspended_cards",
+            description="List all suspended cards, optionally filtered by deck.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Optional deck name to filter results"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum cards to return (default: 50)",
+                        "default": 50
+                    }
+                },
+                "required": []
+            }
+        ),
+        # Phase 3: Content management tools
+        Tool(
+            name="update_note",
+            description="Update the content of an existing note's fields.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_id": {
+                        "type": "integer",
+                        "description": "The note ID to update"
+                    },
+                    "fields": {
+                        "type": "object",
+                        "description": "Dictionary of field names to new values (e.g., {'Front': 'new question', 'Back': 'new answer'})"
+                    }
+                },
+                "required": ["note_id", "fields"]
+            }
+        ),
+        Tool(
+            name="delete_notes",
+            description="Permanently delete notes and all their associated cards. This action cannot be undone!",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of note IDs to delete"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to confirm deletion"
+                    }
+                },
+                "required": ["note_ids", "confirm"]
+            }
+        ),
+        Tool(
+            name="move_cards",
+            description="Move cards to a different deck.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs to move"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find cards to move (alternative to card_ids)"
+                    },
+                    "target_deck": {
+                        "type": "string",
+                        "description": "Destination deck name"
+                    }
+                },
+                "required": ["target_deck"]
+            }
+        ),
+        Tool(
+            name="remove_tags",
+            description="Remove tags from notes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "note_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of note IDs"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find notes (alternative to note_ids)"
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of tags to remove"
+                    }
+                },
+                "required": ["tags"]
+            }
+        ),
+        # Phase 4: Scheduling and bulk operations
+        Tool(
+            name="get_due_cards",
+            description="Find cards that are due for review.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Optional deck name to filter"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum cards to return (default: 50)",
+                        "default": 50
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="reset_card_progress",
+            description="Reset cards to 'new' state, removing all review history. Useful for relearning material.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs to reset"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find cards to reset (alternative to card_ids)"
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to confirm reset"
+                    }
+                },
+                "required": ["confirm"]
+            }
+        ),
+        Tool(
+            name="set_ease_factor",
+            description="Adjust the ease factor for cards. Higher ease = longer intervals between reviews.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of card IDs"
+                    },
+                    "ease": {
+                        "type": "integer",
+                        "description": "New ease factor in permille (e.g., 2500 = 250%). Range: 1300-5000 recommended."
+                    }
+                },
+                "required": ["card_ids", "ease"]
+            }
+        ),
+        # Tier 3: Study analytics tools
+        Tool(
+            name="get_review_history",
+            description="Get review history for a deck showing recent reviews and their outcomes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Deck name to get review history for"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of reviews to return (default: 100)",
+                        "default": 100
+                    }
+                },
+                "required": ["deck"]
+            }
+        ),
+        Tool(
+            name="get_retention_stats",
+            description="Calculate retention metrics for a deck based on review history. Shows success rate and lapse patterns.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Optional deck name to filter. Analyzes all decks if not specified."
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days to analyze (default: 30)",
+                        "default": 30
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_study_streak",
+            description="Calculate your study streak - consecutive days with at least one review.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_learning_curve",
+            description="Analyze learning progress over time showing review counts, retention, and workload trends.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days to analyze (default: 30)",
+                        "default": 30
+                    }
+                },
                 "required": []
             }
         ),
@@ -366,6 +684,726 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(
                 type="text",
                 text="✓ Anki collection synchronized with AnkiWeb"
+            )]
+
+        elif name == "get_deck_stats":
+            deck = arguments["deck"]
+            stats = await anki.get_deck_stats([deck])
+
+            if not stats:
+                return [TextContent(
+                    type="text",
+                    text=f"No statistics found for deck '{deck}'. Use list_decks to see available decks."
+                )]
+
+            # Stats are keyed by deck ID, get the first (and only) one
+            deck_stats = list(stats.values())[0]
+
+            result_parts = [
+                f"Statistics for '{deck}':",
+                f"  New cards: {deck_stats.get('new_count', 0)}",
+                f"  Learning: {deck_stats.get('learn_count', 0)}",
+                f"  Review: {deck_stats.get('review_count', 0)}",
+                f"  Total in deck: {deck_stats.get('total_in_deck', 0)}"
+            ]
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_collection_stats":
+            # Get cards reviewed today
+            reviewed_today = await anki.get_num_cards_reviewed_today()
+
+            # Get review history (last 30 days)
+            review_history = await anki.get_num_cards_reviewed_by_day()
+
+            # Get all decks and their stats
+            decks = await anki.deck_names()
+            all_stats = await anki.get_deck_stats(decks)
+
+            # Calculate totals
+            total_new = 0
+            total_learning = 0
+            total_review = 0
+            total_cards = 0
+
+            for deck_stat in all_stats.values():
+                total_new += deck_stat.get('new_count', 0)
+                total_learning += deck_stat.get('learn_count', 0)
+                total_review += deck_stat.get('review_count', 0)
+                total_cards += deck_stat.get('total_in_deck', 0)
+
+            # Calculate recent review stats
+            recent_reviews = review_history[:7] if review_history else []
+            week_total = sum(day[1] for day in recent_reviews) if recent_reviews else 0
+            week_avg = week_total / 7 if recent_reviews else 0
+
+            result_parts = [
+                "Collection Statistics:",
+                f"  Total cards: {total_cards}",
+                f"  Due today: {total_review}",
+                f"  New available: {total_new}",
+                f"  Currently learning: {total_learning}",
+                f"",
+                f"Review Activity:",
+                f"  Reviewed today: {reviewed_today}",
+                f"  Last 7 days: {week_total}",
+                f"  Daily average (7d): {week_avg:.1f}",
+                f"  Total decks: {len(decks)}"
+            ]
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_problem_cards":
+            deck = arguments.get("deck")
+            criteria = arguments.get("criteria", "all")
+            limit = arguments.get("limit", 20)
+
+            # Build search query
+            base_query = f'deck:"{deck}"' if deck else ""
+
+            problem_cards = []
+
+            # Find cards with low ease (factor < 2000 means ease < 200% or 2.0)
+            if criteria in ("low_ease", "all"):
+                query = f"{base_query} prop:ease<2".strip()
+                low_ease_ids = await anki.find_cards(query)
+                if low_ease_ids:
+                    cards_info = await anki.cards_info(low_ease_ids[:limit])
+                    for card in cards_info:
+                        ease = card.get('factor', 0) / 1000  # Convert from permille
+                        problem_cards.append({
+                            'card_id': card.get('cardId'),
+                            'note_id': card.get('note'),
+                            'deck': card.get('deckName'),
+                            'issue': 'low_ease',
+                            'ease': ease,
+                            'lapses': card.get('lapses', 0),
+                            'interval': card.get('interval', 0),
+                            'question': card.get('question', '')[:80]
+                        })
+
+            # Find cards with high lapses (4 or more)
+            if criteria in ("high_lapses", "all"):
+                query = f"{base_query} prop:lapses>=4".strip()
+                high_lapse_ids = await anki.find_cards(query)
+                if high_lapse_ids:
+                    # Avoid duplicates if we already have low_ease cards
+                    existing_ids = {c['card_id'] for c in problem_cards}
+                    new_ids = [cid for cid in high_lapse_ids if cid not in existing_ids]
+
+                    if new_ids:
+                        cards_info = await anki.cards_info(new_ids[:limit])
+                        for card in cards_info:
+                            ease = card.get('factor', 0) / 1000
+                            problem_cards.append({
+                                'card_id': card.get('cardId'),
+                                'note_id': card.get('note'),
+                                'deck': card.get('deckName'),
+                                'issue': 'high_lapses',
+                                'ease': ease,
+                                'lapses': card.get('lapses', 0),
+                                'interval': card.get('interval', 0),
+                                'question': card.get('question', '')[:80]
+                            })
+
+            # Limit total results
+            problem_cards = problem_cards[:limit]
+
+            if not problem_cards:
+                deck_str = f" in '{deck}'" if deck else ""
+                return [TextContent(
+                    type="text",
+                    text=f"No problem cards found{deck_str}. Your cards are doing well!"
+                )]
+
+            # Format results
+            deck_str = f" in '{deck}'" if deck else ""
+            result_parts = [f"Found {len(problem_cards)} problem cards{deck_str}:\n"]
+
+            for card in problem_cards:
+                # Clean HTML from question
+                question = card['question'].replace('<br>', ' ').replace('<br/>', ' ')
+                # Simple HTML tag removal
+                import re
+                question = re.sub(r'<[^>]+>', '', question)
+                question = question[:60] + "..." if len(question) > 60 else question
+
+                issue_str = "low ease" if card['issue'] == 'low_ease' else "high lapses"
+                result_parts.append(
+                    f"- [{issue_str}] ease={card['ease']:.2f}, lapses={card['lapses']}, "
+                    f"interval={card['interval']}d"
+                )
+                result_parts.append(f"  Q: {question}")
+                result_parts.append(f"  Card ID: {card['card_id']} | Deck: {card['deck']}")
+                result_parts.append("")
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        # Phase 2: Card state management handlers
+        elif name == "suspend_cards":
+            card_ids = arguments.get("card_ids", [])
+            query = arguments.get("query")
+
+            if not card_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'card_ids' or 'query' parameter"
+                )]
+
+            if query:
+                card_ids = await anki.find_cards(query)
+                if not card_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No cards found matching query: {query}"
+                    )]
+
+            await anki.suspend(card_ids)
+            return [TextContent(
+                type="text",
+                text=f"✓ Suspended {len(card_ids)} card(s)"
+            )]
+
+        elif name == "unsuspend_cards":
+            card_ids = arguments.get("card_ids", [])
+            query = arguments.get("query")
+
+            if not card_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'card_ids' or 'query' parameter"
+                )]
+
+            if query:
+                card_ids = await anki.find_cards(query)
+                if not card_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No cards found matching query: {query}"
+                    )]
+
+            await anki.unsuspend(card_ids)
+            return [TextContent(
+                type="text",
+                text=f"✓ Unsuspended {len(card_ids)} card(s)"
+            )]
+
+        elif name == "get_suspended_cards":
+            deck = arguments.get("deck")
+            limit = arguments.get("limit", 50)
+
+            query = "is:suspended"
+            if deck:
+                query = f'deck:"{deck}" is:suspended'
+
+            card_ids = await anki.find_cards(query)
+
+            if not card_ids:
+                deck_str = f" in '{deck}'" if deck else ""
+                return [TextContent(
+                    type="text",
+                    text=f"No suspended cards found{deck_str}."
+                )]
+
+            card_ids = card_ids[:limit]
+            cards = await anki.cards_info(card_ids)
+
+            deck_str = f" in '{deck}'" if deck else ""
+            result_parts = [f"Found {len(cards)} suspended cards{deck_str}:\n"]
+
+            for card in cards:
+                question = card.get('question', '')[:60]
+                question = re.sub(r'<[^>]+>', '', question)
+                result_parts.append(f"- Card ID {card.get('cardId')}: {question}")
+                result_parts.append(f"  Deck: {card.get('deckName')}")
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        # Phase 3: Content management handlers
+        elif name == "update_note":
+            note_id = arguments["note_id"]
+            fields = arguments["fields"]
+
+            await anki.update_note_fields(note_id, fields)
+
+            field_names = ", ".join(fields.keys())
+            return [TextContent(
+                type="text",
+                text=f"✓ Updated note {note_id} (fields: {field_names})"
+            )]
+
+        elif name == "delete_notes":
+            note_ids = arguments["note_ids"]
+            confirm = arguments.get("confirm", False)
+
+            if not confirm:
+                return [TextContent(
+                    type="text",
+                    text=f"⚠ Deletion cancelled. To delete {len(note_ids)} note(s), set confirm=true.\nThis action cannot be undone!"
+                )]
+
+            await anki.delete_notes(note_ids)
+            return [TextContent(
+                type="text",
+                text=f"✓ Deleted {len(note_ids)} note(s) and their associated cards"
+            )]
+
+        elif name == "move_cards":
+            card_ids = arguments.get("card_ids", [])
+            query = arguments.get("query")
+            target_deck = arguments["target_deck"]
+
+            if not card_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'card_ids' or 'query' parameter"
+                )]
+
+            if query:
+                card_ids = await anki.find_cards(query)
+                if not card_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No cards found matching query: {query}"
+                    )]
+
+            # Ensure target deck exists
+            try:
+                await anki.create_deck(target_deck)
+            except AnkiConnectError:
+                pass
+
+            await anki.change_deck(card_ids, target_deck)
+            return [TextContent(
+                type="text",
+                text=f"✓ Moved {len(card_ids)} card(s) to '{target_deck}'"
+            )]
+
+        elif name == "remove_tags":
+            note_ids = arguments.get("note_ids", [])
+            query = arguments.get("query")
+            tags = arguments["tags"]
+
+            if not note_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'note_ids' or 'query' parameter"
+                )]
+
+            if query:
+                note_ids = await anki.find_notes(query)
+                if not note_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No notes found matching query: {query}"
+                    )]
+
+            tags_str = " ".join(tags)
+            await anki.remove_tags(note_ids, tags_str)
+            return [TextContent(
+                type="text",
+                text=f"✓ Removed tags [{', '.join(tags)}] from {len(note_ids)} note(s)"
+            )]
+
+        # Phase 4: Scheduling handlers
+        elif name == "get_due_cards":
+            deck = arguments.get("deck")
+            limit = arguments.get("limit", 50)
+
+            query = "is:due"
+            if deck:
+                query = f'deck:"{deck}" is:due'
+
+            card_ids = await anki.find_cards(query)
+
+            if not card_ids:
+                deck_str = f" in '{deck}'" if deck else ""
+                return [TextContent(
+                    type="text",
+                    text=f"No cards due for review{deck_str}."
+                )]
+
+            card_ids = card_ids[:limit]
+            cards = await anki.cards_info(card_ids)
+
+            deck_str = f" in '{deck}'" if deck else ""
+            result_parts = [f"Found {len(cards)} cards due for review{deck_str}:\n"]
+
+            for card in cards:
+                question = card.get('question', '')[:50]
+                question = re.sub(r'<[^>]+>', '', question)
+                interval = card.get('interval', 0)
+                due = card.get('due', 0)
+                result_parts.append(f"- {question}")
+                result_parts.append(f"  Card ID: {card.get('cardId')} | Interval: {interval}d | Deck: {card.get('deckName')}")
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "reset_card_progress":
+            card_ids = arguments.get("card_ids", [])
+            query = arguments.get("query")
+            confirm = arguments.get("confirm", False)
+
+            if not card_ids and not query:
+                return [TextContent(
+                    type="text",
+                    text="Error: Must provide either 'card_ids' or 'query' parameter"
+                )]
+
+            if query:
+                card_ids = await anki.find_cards(query)
+                if not card_ids:
+                    return [TextContent(
+                        type="text",
+                        text=f"No cards found matching query: {query}"
+                    )]
+
+            if not confirm:
+                return [TextContent(
+                    type="text",
+                    text=f"⚠ Reset cancelled. To reset {len(card_ids)} card(s) to new state, set confirm=true.\nThis will remove all review history!"
+                )]
+
+            await anki.forget_cards(card_ids)
+            return [TextContent(
+                type="text",
+                text=f"✓ Reset {len(card_ids)} card(s) to new state"
+            )]
+
+        elif name == "set_ease_factor":
+            card_ids = arguments["card_ids"]
+            ease = arguments["ease"]
+
+            # Validate ease range
+            if ease < 1000 or ease > 9999:
+                return [TextContent(
+                    type="text",
+                    text="Error: Ease factor must be between 1000 and 9999 (1300-5000 recommended)"
+                )]
+
+            # Set same ease for all cards
+            ease_factors = [ease] * len(card_ids)
+            results = await anki.set_ease_factors(card_ids, ease_factors)
+
+            success_count = sum(1 for r in results if r)
+            ease_percent = ease / 10
+
+            return [TextContent(
+                type="text",
+                text=f"✓ Set ease factor to {ease_percent:.0f}% for {success_count}/{len(card_ids)} card(s)"
+            )]
+
+        # Tier 3: Study analytics handlers
+        elif name == "get_review_history":
+            deck = arguments["deck"]
+            limit = arguments.get("limit", 100)
+
+            try:
+                reviews = await anki.get_card_reviews(deck)
+            except AnkiConnectError:
+                reviews = []
+
+            if not reviews:
+                return [TextContent(
+                    type="text",
+                    text=f"No review history found for deck '{deck}'."
+                )]
+
+            # Sort by review ID (most recent first) and limit
+            reviews = sorted(reviews, key=lambda r: r.get('id', 0), reverse=True)[:limit]
+
+            # Count outcomes: ease 1=Again, 2=Hard, 3=Good, 4=Easy
+            outcomes = {'again': 0, 'hard': 0, 'good': 0, 'easy': 0}
+            total_time = 0
+
+            for review in reviews:
+                ease = review.get('ease', 0)
+                if ease == 1:
+                    outcomes['again'] += 1
+                elif ease == 2:
+                    outcomes['hard'] += 1
+                elif ease == 3:
+                    outcomes['good'] += 1
+                elif ease == 4:
+                    outcomes['easy'] += 1
+                total_time += review.get('time', 0)
+
+            total_reviews = len(reviews)
+            success_rate = (outcomes['good'] + outcomes['easy']) / total_reviews * 100 if total_reviews > 0 else 0
+            avg_time = total_time / total_reviews / 1000 if total_reviews > 0 else 0  # Convert ms to seconds
+
+            result_parts = [
+                f"Review History for '{deck}' (last {total_reviews} reviews):",
+                f"",
+                f"Outcomes:",
+                f"  Again (1): {outcomes['again']} ({outcomes['again']/total_reviews*100:.1f}%)" if total_reviews > 0 else "  Again (1): 0",
+                f"  Hard (2): {outcomes['hard']} ({outcomes['hard']/total_reviews*100:.1f}%)" if total_reviews > 0 else "  Hard (2): 0",
+                f"  Good (3): {outcomes['good']} ({outcomes['good']/total_reviews*100:.1f}%)" if total_reviews > 0 else "  Good (3): 0",
+                f"  Easy (4): {outcomes['easy']} ({outcomes['easy']/total_reviews*100:.1f}%)" if total_reviews > 0 else "  Easy (4): 0",
+                f"",
+                f"Summary:",
+                f"  Success rate (Good+Easy): {success_rate:.1f}%",
+                f"  Average review time: {avg_time:.1f}s",
+            ]
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_retention_stats":
+            deck = arguments.get("deck")
+            days = arguments.get("days", 30)
+
+            # Get review history by day
+            review_history = await anki.get_num_cards_reviewed_by_day()
+
+            # Filter to requested days
+            review_history = review_history[:days] if review_history else []
+
+            if not review_history:
+                return [TextContent(
+                    type="text",
+                    text="No review history available."
+                )]
+
+            # Calculate total reviews
+            total_reviews = sum(day[1] for day in review_history)
+
+            # Get problem cards to estimate retention issues
+            base_query = f'deck:"{deck}"' if deck else ""
+
+            # Find lapsed cards (indicates retention failures)
+            lapse_query = f"{base_query} prop:lapses>=1".strip()
+            lapsed_card_ids = await anki.find_cards(lapse_query)
+
+            # Find reviewed cards (mature cards)
+            reviewed_query = f"{base_query} prop:ivl>=21".strip()
+            mature_card_ids = await anki.find_cards(reviewed_query)
+
+            # Get lapse info
+            total_lapses = 0
+            if lapsed_card_ids:
+                lapsed_cards = await anki.cards_info(lapsed_card_ids[:500])  # Limit for performance
+                total_lapses = sum(c.get('lapses', 0) for c in lapsed_cards)
+
+            # Estimate retention (mature cards that haven't lapsed recently)
+            mature_count = len(mature_card_ids)
+            lapsed_count = len(lapsed_card_ids)
+
+            # Get ease distribution
+            all_query = f'deck:"{deck}" -is:new'.strip() if deck else "-is:new"
+            reviewed_ids = await anki.find_cards(all_query)
+
+            ease_distribution = {'low': 0, 'normal': 0, 'high': 0}
+            if reviewed_ids:
+                cards_info = await anki.cards_info(reviewed_ids[:500])
+                for card in cards_info:
+                    factor = card.get('factor', 2500)
+                    if factor < 2000:
+                        ease_distribution['low'] += 1
+                    elif factor > 2800:
+                        ease_distribution['high'] += 1
+                    else:
+                        ease_distribution['normal'] += 1
+
+            deck_str = f" for '{deck}'" if deck else ""
+            result_parts = [
+                f"Retention Statistics{deck_str} (last {days} days):",
+                f"",
+                f"Review Activity:",
+                f"  Total reviews: {total_reviews}",
+                f"  Daily average: {total_reviews/days:.1f}",
+                f"",
+                f"Card Health:",
+                f"  Mature cards (21+ day interval): {mature_count}",
+                f"  Cards with lapses: {lapsed_count}",
+                f"  Total lapses recorded: {total_lapses}",
+                f"",
+                f"Ease Distribution:",
+                f"  Low ease (<200%): {ease_distribution['low']}",
+                f"  Normal ease (200-280%): {ease_distribution['normal']}",
+                f"  High ease (>280%): {ease_distribution['high']}",
+            ]
+
+            # Retention estimate
+            if mature_count > 0:
+                # Rough retention estimate based on lapse ratio
+                retention_est = max(0, 100 - (lapsed_count / max(mature_count, 1) * 20))
+                result_parts.extend([
+                    f"",
+                    f"Estimated retention: {retention_est:.0f}%"
+                ])
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_study_streak":
+            # Get review history
+            review_history = await anki.get_num_cards_reviewed_by_day()
+
+            if not review_history:
+                return [TextContent(
+                    type="text",
+                    text="No study history available."
+                )]
+
+            # Calculate current streak
+            current_streak = 0
+            for day_data in review_history:
+                reviews = day_data[1]
+                if reviews > 0:
+                    current_streak += 1
+                else:
+                    break
+
+            # Calculate longest streak (within available data)
+            longest_streak = 0
+            temp_streak = 0
+            for day_data in review_history:
+                reviews = day_data[1]
+                if reviews > 0:
+                    temp_streak += 1
+                    longest_streak = max(longest_streak, temp_streak)
+                else:
+                    temp_streak = 0
+
+            # Calculate total study days and reviews
+            total_days = sum(1 for d in review_history if d[1] > 0)
+            total_reviews = sum(d[1] for d in review_history)
+            data_days = len(review_history)
+
+            # Recent activity (last 7 days)
+            last_7_days = review_history[:7]
+            recent_reviews = sum(d[1] for d in last_7_days)
+            recent_days_studied = sum(1 for d in last_7_days if d[1] > 0)
+
+            result_parts = [
+                "Study Streak Analysis:",
+                f"",
+                f"Current streak: {current_streak} day(s)",
+                f"Longest streak: {longest_streak} day(s)",
+                f"",
+                f"Last 7 days:",
+                f"  Days studied: {recent_days_studied}/7",
+                f"  Reviews completed: {recent_reviews}",
+                f"",
+                f"All-time (last {data_days} days):",
+                f"  Days studied: {total_days}/{data_days}",
+                f"  Total reviews: {total_reviews}",
+                f"  Study consistency: {total_days/data_days*100:.0f}%",
+            ]
+
+            # Add streak encouragement
+            if current_streak > 0:
+                result_parts.append(f"\n🔥 Keep it up! You're on a {current_streak}-day streak!")
+            elif review_history and review_history[0][1] == 0:
+                result_parts.append(f"\n📚 Time to study! Start a new streak today.")
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_learning_curve":
+            days = arguments.get("days", 30)
+
+            # Get review history
+            review_history = await anki.get_num_cards_reviewed_by_day()
+
+            if not review_history:
+                return [TextContent(
+                    type="text",
+                    text="No review history available."
+                )]
+
+            # Limit to requested days
+            review_history = review_history[:days]
+
+            # Reverse to show oldest to newest
+            review_history = list(reversed(review_history))
+
+            # Calculate weekly trends
+            weeks = []
+            for i in range(0, len(review_history), 7):
+                week_data = review_history[i:i+7]
+                week_reviews = sum(d[1] for d in week_data)
+                week_days = len(week_data)
+                weeks.append({
+                    'reviews': week_reviews,
+                    'days': week_days,
+                    'avg': week_reviews / week_days if week_days > 0 else 0
+                })
+
+            # Get collection growth (new cards added/learned)
+            decks = await anki.deck_names()
+            all_stats = await anki.get_deck_stats(decks)
+
+            total_new = 0
+            total_learning = 0
+            total_review = 0
+            total_cards = 0
+
+            for deck_stat in all_stats.values():
+                total_new += deck_stat.get('new_count', 0)
+                total_learning += deck_stat.get('learn_count', 0)
+                total_review += deck_stat.get('review_count', 0)
+                total_cards += deck_stat.get('total_in_deck', 0)
+
+            # Calculate trend (comparing first half to second half)
+            half = len(review_history) // 2
+            first_half = sum(d[1] for d in review_history[:half])
+            second_half = sum(d[1] for d in review_history[half:])
+
+            if first_half > 0:
+                trend_pct = ((second_half - first_half) / first_half) * 100
+                trend_str = f"+{trend_pct:.0f}%" if trend_pct > 0 else f"{trend_pct:.0f}%"
+            else:
+                trend_str = "N/A"
+
+            result_parts = [
+                f"Learning Curve Analysis (last {len(review_history)} days):",
+                f"",
+                f"Current Collection:",
+                f"  Total cards: {total_cards}",
+                f"  New (not started): {total_new}",
+                f"  Learning: {total_learning}",
+                f"  Due for review: {total_review}",
+                f"",
+                f"Weekly Progress:"
+            ]
+
+            for i, week in enumerate(weeks, 1):
+                bar_len = min(20, int(week['avg'] / 5))  # Scale bar
+                bar = "█" * bar_len + "░" * (20 - bar_len)
+                result_parts.append(f"  Week {i}: {bar} {week['reviews']} reviews ({week['avg']:.0f}/day)")
+
+            result_parts.extend([
+                f"",
+                f"Trend (comparing halves): {trend_str}",
+                f"Total reviews: {sum(d[1] for d in review_history)}",
+            ])
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
             )]
 
         else:

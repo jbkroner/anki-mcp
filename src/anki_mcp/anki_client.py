@@ -200,3 +200,235 @@ class AnkiClient:
     async def gui_add_cards(self) -> None:
         """Open the Add Cards dialog in Anki."""
         await self._invoke("guiAddCards")
+
+    # Statistics and card info methods
+
+    async def get_deck_stats(self, deck_names: list[str]) -> dict:
+        """
+        Get statistics for specified decks.
+
+        Args:
+            deck_names: List of deck names to get stats for
+
+        Returns:
+            Dictionary with deck IDs as keys and stats as values.
+            Each stats dict contains: new_count, learn_count, review_count, total_in_deck
+        """
+        return await self._invoke("getDeckStats", decks=deck_names)
+
+    async def get_num_cards_reviewed_today(self) -> int:
+        """Get the number of cards reviewed today."""
+        return await self._invoke("getNumCardsReviewedToday")
+
+    async def get_num_cards_reviewed_by_day(self) -> list[list]:
+        """
+        Get review counts by day.
+
+        Returns:
+            List of [days_ago, review_count] pairs
+        """
+        return await self._invoke("getNumCardsReviewedByDay")
+
+    async def get_collection_stats_html(self, whole_collection: bool = True) -> str:
+        """
+        Get collection statistics as HTML.
+
+        Args:
+            whole_collection: If True, get stats for whole collection; otherwise current deck
+
+        Returns:
+            HTML string with statistics
+        """
+        return await self._invoke("getCollectionStatsHTML", wholeCollection=whole_collection)
+
+    async def find_cards(self, query: str) -> list[int]:
+        """
+        Search for cards using Anki search syntax.
+
+        Args:
+            query: Anki search query (e.g., "deck:Spanish is:due")
+
+        Returns:
+            List of card IDs matching the query
+        """
+        return await self._invoke("findCards", query=query)
+
+    async def cards_info(self, card_ids: list[int]) -> list[dict]:
+        """
+        Get detailed information about specific cards.
+
+        Args:
+            card_ids: List of card IDs
+
+        Returns:
+            List of card information dictionaries containing fields like:
+            cardId, deckName, due, factor, interval, lapses, queue, type, etc.
+        """
+        return await self._invoke("cardsInfo", cards=card_ids)
+
+    async def get_intervals(self, card_ids: list[int], complete: bool = False) -> list:
+        """
+        Get intervals for cards.
+
+        Args:
+            card_ids: List of card IDs
+            complete: If True, return all historical intervals; if False, just current
+
+        Returns:
+            List of intervals (or list of interval lists if complete=True)
+        """
+        return await self._invoke("getIntervals", cards=card_ids, complete=complete)
+
+    # Phase 2: Card state management methods
+
+    async def suspend(self, card_ids: list[int]) -> bool:
+        """
+        Suspend cards by ID.
+
+        Args:
+            card_ids: List of card IDs to suspend
+
+        Returns:
+            True if successful
+        """
+        return await self._invoke("suspend", cards=card_ids)
+
+    async def unsuspend(self, card_ids: list[int]) -> bool:
+        """
+        Unsuspend cards by ID.
+
+        Args:
+            card_ids: List of card IDs to unsuspend
+
+        Returns:
+            True if successful
+        """
+        return await self._invoke("unsuspend", cards=card_ids)
+
+    async def are_suspended(self, card_ids: list[int]) -> list[bool]:
+        """
+        Check if cards are suspended.
+
+        Args:
+            card_ids: List of card IDs to check
+
+        Returns:
+            List of booleans indicating suspension status
+        """
+        return await self._invoke("areSuspended", cards=card_ids)
+
+    async def are_buried(self, card_ids: list[int]) -> list[bool]:
+        """
+        Check if cards are buried.
+
+        Args:
+            card_ids: List of card IDs to check
+
+        Returns:
+            List of booleans indicating burial status
+        """
+        return await self._invoke("areBuried", cards=card_ids)
+
+    # Phase 3: Content management methods
+
+    async def update_note_fields(self, note_id: int, fields: dict[str, str]) -> None:
+        """
+        Update fields on an existing note.
+
+        Args:
+            note_id: ID of the note to update
+            fields: Dictionary of field names to new values
+        """
+        await self._invoke("updateNoteFields", note={"id": note_id, "fields": fields})
+
+    async def delete_notes(self, note_ids: list[int]) -> None:
+        """
+        Delete notes by ID. Also deletes associated cards.
+
+        Args:
+            note_ids: List of note IDs to delete
+        """
+        await self._invoke("deleteNotes", notes=note_ids)
+
+    async def change_deck(self, card_ids: list[int], deck_name: str) -> None:
+        """
+        Move cards to a different deck.
+
+        Args:
+            card_ids: List of card IDs to move
+            deck_name: Target deck name
+        """
+        await self._invoke("changeDeck", cards=card_ids, deck=deck_name)
+
+    async def remove_tags(self, note_ids: list[int], tags: str) -> None:
+        """
+        Remove tags from notes.
+
+        Args:
+            note_ids: List of note IDs
+            tags: Space-separated tag string to remove
+        """
+        await self._invoke("removeTags", notes=note_ids, tags=tags)
+
+    # Phase 4: Scheduling methods
+
+    async def forget_cards(self, card_ids: list[int]) -> None:
+        """
+        Reset cards to new state, removing all review history.
+
+        Args:
+            card_ids: List of card IDs to reset
+        """
+        await self._invoke("forgetCards", cards=card_ids)
+
+    async def set_ease_factors(self, card_ids: list[int], ease_factors: list[int]) -> list[bool]:
+        """
+        Set ease factors for cards.
+
+        Args:
+            card_ids: List of card IDs
+            ease_factors: List of ease factors in permille (e.g., 2500 = 250%)
+
+        Returns:
+            List of booleans indicating success for each card
+        """
+        return await self._invoke("setEaseFactors", cards=card_ids, easeFactors=ease_factors)
+
+    async def get_ease_factors(self, card_ids: list[int]) -> list[int]:
+        """
+        Get ease factors for cards.
+
+        Args:
+            card_ids: List of card IDs
+
+        Returns:
+            List of ease factors in permille
+        """
+        return await self._invoke("getEaseFactors", cards=card_ids)
+
+    # Tier 3: Study analytics methods
+
+    async def get_card_reviews(self, deck_name: str, start_id: int = 0) -> list[dict]:
+        """
+        Get review history for cards in a deck.
+
+        Args:
+            deck_name: Name of the deck
+            start_id: Starting review ID (0 for all reviews)
+
+        Returns:
+            List of review records with id, usn, ease, ivl, lastIvl, factor, time, type
+        """
+        return await self._invoke("cardReviews", deck=deck_name, startID=start_id)
+
+    async def get_latest_review_id(self, deck_name: str) -> int:
+        """
+        Get the latest review ID for a deck.
+
+        Args:
+            deck_name: Name of the deck
+
+        Returns:
+            The latest review ID
+        """
+        return await self._invoke("getLatestReviewID", deck=deck_name)
