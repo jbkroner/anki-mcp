@@ -36,6 +36,20 @@ class MockCard:
 
 
 @dataclass
+class MockReview:
+    """Represents a review record in the mock Anki collection."""
+    review_id: int
+    card_id: int
+    usn: int = -1
+    ease: int = 3  # 1=Again, 2=Hard, 3=Good, 4=Easy
+    ivl: int = 1  # New interval
+    lastIvl: int = 0  # Previous interval
+    factor: int = 2500  # Ease factor
+    time: int = 5000  # Review time in ms
+    type: int = 1  # 0=learn, 1=review, 2=relearn, 3=filtered
+
+
+@dataclass
 class MockAnkiState:
     """In-memory state for mock Anki."""
     decks: dict[str, int] = field(default_factory=lambda: {"Default": 1})
@@ -47,9 +61,11 @@ class MockAnkiState:
     notes: dict[int, MockNote] = field(default_factory=dict)
     cards: dict[int, MockCard] = field(default_factory=dict)
     tags: set[str] = field(default_factory=set)
+    reviews: dict[str, list[MockReview]] = field(default_factory=dict)  # deck -> reviews
     next_note_id: int = 1000000000
     next_card_id: int = 1000000000
     next_deck_id: int = 100
+    next_review_id: int = 1000000000
     reviews_today: int = 5
     reviews_by_day: list[list[int]] = field(default_factory=lambda: [
         [0, 10], [1, 15], [2, 8], [3, 12], [4, 20], [5, 5], [6, 18]
@@ -143,6 +159,9 @@ class MockAnkiConnect:
             "forgetCards": self._forget_cards,
             "setEaseFactors": self._set_ease_factors,
             "getEaseFactors": self._get_ease_factors,
+            # Tier 3: Study analytics
+            "cardReviews": self._card_reviews,
+            "getLatestReviewID": self._get_latest_review_id,
         }
 
         handler = handlers.get(action)
@@ -430,6 +449,28 @@ class MockAnkiConnect:
             if card.queue != 2 or card.due > 0:
                 return False
 
+        # Handle prop:ivl (interval) queries
+        if "prop:ivl>=" in query_lower:
+            import re
+            ivl_match = re.search(r'prop:ivl>=(\d+)', query_lower)
+            if ivl_match:
+                threshold = int(ivl_match.group(1))
+                if card.interval < threshold:
+                    return False
+
+        if "prop:ivl<" in query_lower:
+            import re
+            ivl_match = re.search(r'prop:ivl<(\d+)', query_lower)
+            if ivl_match:
+                threshold = int(ivl_match.group(1))
+                if card.interval >= threshold:
+                    return False
+
+        # Handle -is:new (not new cards)
+        if "-is:new" in query_lower:
+            if card.queue == 0:  # Queue 0 is new
+                return False
+
         return True
 
     def _cards_info(self, params: dict) -> list[dict]:
@@ -593,6 +634,79 @@ class MockAnkiConnect:
             for cid in card_ids
         ]
 
+    # Tier 3: Study analytics methods
+
+    def _card_reviews(self, params: dict) -> list[dict]:
+        """Get review history for a deck."""
+        deck_name = params["deck"]
+        start_id = params.get("startID", 0)
+
+        # Initialize reviews for deck if not present
+        if deck_name not in self.state.reviews:
+            # Generate some mock review data
+            self._generate_mock_reviews(deck_name)
+
+        reviews = self.state.reviews.get(deck_name, [])
+
+        # Filter by start_id and return as dicts
+        result = []
+        for review in reviews:
+            if review.review_id >= start_id:
+                result.append({
+                    "id": review.review_id,
+                    "usn": review.usn,
+                    "ease": review.ease,
+                    "ivl": review.ivl,
+                    "lastIvl": review.lastIvl,
+                    "factor": review.factor,
+                    "time": review.time,
+                    "type": review.type,
+                })
+
+        return result
+
+    def _get_latest_review_id(self, params: dict) -> int:
+        """Get the latest review ID for a deck."""
+        deck_name = params["deck"]
+
+        if deck_name not in self.state.reviews:
+            return 0
+
+        reviews = self.state.reviews.get(deck_name, [])
+        if not reviews:
+            return 0
+
+        return max(r.review_id for r in reviews)
+
+    def _generate_mock_reviews(self, deck_name: str) -> None:
+        """Generate mock review data for a deck."""
+        reviews = []
+        for i in range(50):
+            review_id = self.state.next_review_id
+            self.state.next_review_id += 1
+
+            # Simulate realistic review distribution
+            ease = 3  # Most reviews are "Good"
+            if i % 10 == 0:
+                ease = 1  # Some "Again"
+            elif i % 5 == 0:
+                ease = 4  # Some "Easy"
+            elif i % 7 == 0:
+                ease = 2  # Some "Hard"
+
+            reviews.append(MockReview(
+                review_id=review_id,
+                card_id=1000000000 + i,
+                ease=ease,
+                ivl=(i + 1) * 2,
+                lastIvl=i * 2 if i > 0 else 0,
+                factor=2500 - (ease == 1) * 200,  # Lower ease for "Again"
+                time=3000 + i * 100,  # Varying review times
+                type=1,
+            ))
+
+        self.state.reviews[deck_name] = reviews
+
     # Helper methods for test setup
 
     def add_problem_card(self, deck_name: str, low_ease: bool = False, high_lapses: bool = False):
@@ -691,6 +805,71 @@ class MockAnkiConnect:
             question=f"Suspended Q {note_id}",
             answer=f"Suspended A {note_id}",
             suspended=True
+        )
+        self.state.cards[card_id] = card
+
+        return card_id
+
+    def add_review_data(self, deck_name: str, outcomes: list[int] | None = None) -> None:
+        """Add review data for a deck for testing analytics.
+
+        Args:
+            deck_name: The deck to add reviews to
+            outcomes: List of ease values (1=Again, 2=Hard, 3=Good, 4=Easy).
+                     If None, generates default data.
+        """
+        self._create_deck({"deck": deck_name})
+
+        if outcomes is None:
+            outcomes = [3, 3, 3, 4, 3, 1, 3, 2, 3, 3]  # Default mix
+
+        reviews = []
+        for i, ease in enumerate(outcomes):
+            review_id = self.state.next_review_id
+            self.state.next_review_id += 1
+
+            reviews.append(MockReview(
+                review_id=review_id,
+                card_id=1000000000 + i,
+                ease=ease,
+                ivl=(i + 1) * 2,
+                lastIvl=i * 2 if i > 0 else 0,
+                factor=2500 - (ease == 1) * 200,
+                time=3000 + i * 100,
+                type=1,
+            ))
+
+        self.state.reviews[deck_name] = reviews
+
+    def add_mature_card(self, deck_name: str, interval: int = 30, lapses: int = 0) -> int:
+        """Add a mature card (21+ day interval) for testing retention stats."""
+        self._create_deck({"deck": deck_name})
+
+        note_id = self.state.next_note_id
+        self.state.next_note_id += 1
+
+        note = MockNote(
+            note_id=note_id,
+            deck_name=deck_name,
+            model_name="Basic",
+            fields={"Front": f"Mature Q {note_id}", "Back": f"Mature A {note_id}"},
+            tags=["mature-card"]
+        )
+        self.state.notes[note_id] = note
+
+        card_id = self.state.next_card_id
+        self.state.next_card_id += 1
+
+        card = MockCard(
+            card_id=card_id,
+            note_id=note_id,
+            deck_name=deck_name,
+            question=f"Mature Q {note_id}",
+            answer=f"Mature A {note_id}",
+            factor=2500,
+            interval=interval,
+            lapses=lapses,
+            queue=2,  # Review queue
         )
         self.state.cards[card_id] = card
 

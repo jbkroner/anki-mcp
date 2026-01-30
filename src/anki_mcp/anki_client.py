@@ -405,3 +405,30 @@ class AnkiClient:
             List of ease factors in permille
         """
         return await self._invoke("getEaseFactors", cards=card_ids)
+
+    # Tier 3: Study analytics methods
+
+    async def get_card_reviews(self, deck_name: str, start_id: int = 0) -> list[dict]:
+        """
+        Get review history for cards in a deck.
+
+        Args:
+            deck_name: Name of the deck
+            start_id: Starting review ID (0 for all reviews)
+
+        Returns:
+            List of review records with id, usn, ease, ivl, lastIvl, factor, time, type
+        """
+        return await self._invoke("cardReviews", deck=deck_name, startID=start_id)
+
+    async def get_latest_review_id(self, deck_name: str) -> int:
+        """
+        Get the latest review ID for a deck.
+
+        Args:
+            deck_name: Name of the deck
+
+        Returns:
+            The latest review ID
+        """
+        return await self._invoke("getLatestReviewID", deck=deck_name)

@@ -435,6 +435,69 @@ async def list_tools() -> list[Tool]:
                 "required": ["card_ids", "ease"]
             }
         ),
+        # Tier 3: Study analytics tools
+        Tool(
+            name="get_review_history",
+            description="Get review history for a deck showing recent reviews and their outcomes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Deck name to get review history for"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of reviews to return (default: 100)",
+                        "default": 100
+                    }
+                },
+                "required": ["deck"]
+            }
+        ),
+        Tool(
+            name="get_retention_stats",
+            description="Calculate retention metrics for a deck based on review history. Shows success rate and lapse patterns.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "deck": {
+                        "type": "string",
+                        "description": "Optional deck name to filter. Analyzes all decks if not specified."
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days to analyze (default: 30)",
+                        "default": 30
+                    }
+                },
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_study_streak",
+            description="Calculate your study streak - consecutive days with at least one review.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        Tool(
+            name="get_learning_curve",
+            description="Analyze learning progress over time showing review counts, retention, and workload trends.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days to analyze (default: 30)",
+                        "default": 30
+                    }
+                },
+                "required": []
+            }
+        ),
     ]
 
 
@@ -1043,6 +1106,304 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(
                 type="text",
                 text=f"✓ Set ease factor to {ease_percent:.0f}% for {success_count}/{len(card_ids)} card(s)"
+            )]
+
+        # Tier 3: Study analytics handlers
+        elif name == "get_review_history":
+            deck = arguments["deck"]
+            limit = arguments.get("limit", 100)
+
+            try:
+                reviews = await anki.get_card_reviews(deck)
+            except AnkiConnectError:
+                reviews = []
+
+            if not reviews:
+                return [TextContent(
+                    type="text",
+                    text=f"No review history found for deck '{deck}'."
+                )]
+
+            # Sort by review ID (most recent first) and limit
+            reviews = sorted(reviews, key=lambda r: r.get('id', 0), reverse=True)[:limit]
+
+            # Count outcomes: ease 1=Again, 2=Hard, 3=Good, 4=Easy
+            outcomes = {'again': 0, 'hard': 0, 'good': 0, 'easy': 0}
+            total_time = 0
+
+            for review in reviews:
+                ease = review.get('ease', 0)
+                if ease == 1:
+                    outcomes['again'] += 1
+                elif ease == 2:
+                    outcomes['hard'] += 1
+                elif ease == 3:
+                    outcomes['good'] += 1
+                elif ease == 4:
+                    outcomes['easy'] += 1
+                total_time += review.get('time', 0)
+
+            total_reviews = len(reviews)
+            success_rate = (outcomes['good'] + outcomes['easy']) / total_reviews * 100 if total_reviews > 0 else 0
+            avg_time = total_time / total_reviews / 1000 if total_reviews > 0 else 0  # Convert ms to seconds
+
+            result_parts = [
+                f"Review History for '{deck}' (last {total_reviews} reviews):",
+                f"",
+                f"Outcomes:",
+                f"  Again (1): {outcomes['again']} ({outcomes['again']/total_reviews*100:.1f}%)" if total_reviews > 0 else "  Again (1): 0",
+                f"  Hard (2): {outcomes['hard']} ({outcomes['hard']/total_reviews*100:.1f}%)" if total_reviews > 0 else "  Hard (2): 0",
+                f"  Good (3): {outcomes['good']} ({outcomes['good']/total_reviews*100:.1f}%)" if total_reviews > 0 else "  Good (3): 0",
+                f"  Easy (4): {outcomes['easy']} ({outcomes['easy']/total_reviews*100:.1f}%)" if total_reviews > 0 else "  Easy (4): 0",
+                f"",
+                f"Summary:",
+                f"  Success rate (Good+Easy): {success_rate:.1f}%",
+                f"  Average review time: {avg_time:.1f}s",
+            ]
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_retention_stats":
+            deck = arguments.get("deck")
+            days = arguments.get("days", 30)
+
+            # Get review history by day
+            review_history = await anki.get_num_cards_reviewed_by_day()
+
+            # Filter to requested days
+            review_history = review_history[:days] if review_history else []
+
+            if not review_history:
+                return [TextContent(
+                    type="text",
+                    text="No review history available."
+                )]
+
+            # Calculate total reviews
+            total_reviews = sum(day[1] for day in review_history)
+
+            # Get problem cards to estimate retention issues
+            base_query = f'deck:"{deck}"' if deck else ""
+
+            # Find lapsed cards (indicates retention failures)
+            lapse_query = f"{base_query} prop:lapses>=1".strip()
+            lapsed_card_ids = await anki.find_cards(lapse_query)
+
+            # Find reviewed cards (mature cards)
+            reviewed_query = f"{base_query} prop:ivl>=21".strip()
+            mature_card_ids = await anki.find_cards(reviewed_query)
+
+            # Get lapse info
+            total_lapses = 0
+            if lapsed_card_ids:
+                lapsed_cards = await anki.cards_info(lapsed_card_ids[:500])  # Limit for performance
+                total_lapses = sum(c.get('lapses', 0) for c in lapsed_cards)
+
+            # Estimate retention (mature cards that haven't lapsed recently)
+            mature_count = len(mature_card_ids)
+            lapsed_count = len(lapsed_card_ids)
+
+            # Get ease distribution
+            all_query = f'deck:"{deck}" -is:new'.strip() if deck else "-is:new"
+            reviewed_ids = await anki.find_cards(all_query)
+
+            ease_distribution = {'low': 0, 'normal': 0, 'high': 0}
+            if reviewed_ids:
+                cards_info = await anki.cards_info(reviewed_ids[:500])
+                for card in cards_info:
+                    factor = card.get('factor', 2500)
+                    if factor < 2000:
+                        ease_distribution['low'] += 1
+                    elif factor > 2800:
+                        ease_distribution['high'] += 1
+                    else:
+                        ease_distribution['normal'] += 1
+
+            deck_str = f" for '{deck}'" if deck else ""
+            result_parts = [
+                f"Retention Statistics{deck_str} (last {days} days):",
+                f"",
+                f"Review Activity:",
+                f"  Total reviews: {total_reviews}",
+                f"  Daily average: {total_reviews/days:.1f}",
+                f"",
+                f"Card Health:",
+                f"  Mature cards (21+ day interval): {mature_count}",
+                f"  Cards with lapses: {lapsed_count}",
+                f"  Total lapses recorded: {total_lapses}",
+                f"",
+                f"Ease Distribution:",
+                f"  Low ease (<200%): {ease_distribution['low']}",
+                f"  Normal ease (200-280%): {ease_distribution['normal']}",
+                f"  High ease (>280%): {ease_distribution['high']}",
+            ]
+
+            # Retention estimate
+            if mature_count > 0:
+                # Rough retention estimate based on lapse ratio
+                retention_est = max(0, 100 - (lapsed_count / max(mature_count, 1) * 20))
+                result_parts.extend([
+                    f"",
+                    f"Estimated retention: {retention_est:.0f}%"
+                ])
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_study_streak":
+            # Get review history
+            review_history = await anki.get_num_cards_reviewed_by_day()
+
+            if not review_history:
+                return [TextContent(
+                    type="text",
+                    text="No study history available."
+                )]
+
+            # Calculate current streak
+            current_streak = 0
+            for day_data in review_history:
+                reviews = day_data[1]
+                if reviews > 0:
+                    current_streak += 1
+                else:
+                    break
+
+            # Calculate longest streak (within available data)
+            longest_streak = 0
+            temp_streak = 0
+            for day_data in review_history:
+                reviews = day_data[1]
+                if reviews > 0:
+                    temp_streak += 1
+                    longest_streak = max(longest_streak, temp_streak)
+                else:
+                    temp_streak = 0
+
+            # Calculate total study days and reviews
+            total_days = sum(1 for d in review_history if d[1] > 0)
+            total_reviews = sum(d[1] for d in review_history)
+            data_days = len(review_history)
+
+            # Recent activity (last 7 days)
+            last_7_days = review_history[:7]
+            recent_reviews = sum(d[1] for d in last_7_days)
+            recent_days_studied = sum(1 for d in last_7_days if d[1] > 0)
+
+            result_parts = [
+                "Study Streak Analysis:",
+                f"",
+                f"Current streak: {current_streak} day(s)",
+                f"Longest streak: {longest_streak} day(s)",
+                f"",
+                f"Last 7 days:",
+                f"  Days studied: {recent_days_studied}/7",
+                f"  Reviews completed: {recent_reviews}",
+                f"",
+                f"All-time (last {data_days} days):",
+                f"  Days studied: {total_days}/{data_days}",
+                f"  Total reviews: {total_reviews}",
+                f"  Study consistency: {total_days/data_days*100:.0f}%",
+            ]
+
+            # Add streak encouragement
+            if current_streak > 0:
+                result_parts.append(f"\n🔥 Keep it up! You're on a {current_streak}-day streak!")
+            elif review_history and review_history[0][1] == 0:
+                result_parts.append(f"\n📚 Time to study! Start a new streak today.")
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_learning_curve":
+            days = arguments.get("days", 30)
+
+            # Get review history
+            review_history = await anki.get_num_cards_reviewed_by_day()
+
+            if not review_history:
+                return [TextContent(
+                    type="text",
+                    text="No review history available."
+                )]
+
+            # Limit to requested days
+            review_history = review_history[:days]
+
+            # Reverse to show oldest to newest
+            review_history = list(reversed(review_history))
+
+            # Calculate weekly trends
+            weeks = []
+            for i in range(0, len(review_history), 7):
+                week_data = review_history[i:i+7]
+                week_reviews = sum(d[1] for d in week_data)
+                week_days = len(week_data)
+                weeks.append({
+                    'reviews': week_reviews,
+                    'days': week_days,
+                    'avg': week_reviews / week_days if week_days > 0 else 0
+                })
+
+            # Get collection growth (new cards added/learned)
+            decks = await anki.deck_names()
+            all_stats = await anki.get_deck_stats(decks)
+
+            total_new = 0
+            total_learning = 0
+            total_review = 0
+            total_cards = 0
+
+            for deck_stat in all_stats.values():
+                total_new += deck_stat.get('new_count', 0)
+                total_learning += deck_stat.get('learn_count', 0)
+                total_review += deck_stat.get('review_count', 0)
+                total_cards += deck_stat.get('total_in_deck', 0)
+
+            # Calculate trend (comparing first half to second half)
+            half = len(review_history) // 2
+            first_half = sum(d[1] for d in review_history[:half])
+            second_half = sum(d[1] for d in review_history[half:])
+
+            if first_half > 0:
+                trend_pct = ((second_half - first_half) / first_half) * 100
+                trend_str = f"+{trend_pct:.0f}%" if trend_pct > 0 else f"{trend_pct:.0f}%"
+            else:
+                trend_str = "N/A"
+
+            result_parts = [
+                f"Learning Curve Analysis (last {len(review_history)} days):",
+                f"",
+                f"Current Collection:",
+                f"  Total cards: {total_cards}",
+                f"  New (not started): {total_new}",
+                f"  Learning: {total_learning}",
+                f"  Due for review: {total_review}",
+                f"",
+                f"Weekly Progress:"
+            ]
+
+            for i, week in enumerate(weeks, 1):
+                bar_len = min(20, int(week['avg'] / 5))  # Scale bar
+                bar = "█" * bar_len + "░" * (20 - bar_len)
+                result_parts.append(f"  Week {i}: {bar} {week['reviews']} reviews ({week['avg']:.0f}/day)")
+
+            result_parts.extend([
+                f"",
+                f"Trend (comparing halves): {trend_str}",
+                f"Total reviews: {sum(d[1] for d in review_history)}",
+            ])
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
             )]
 
         else:
