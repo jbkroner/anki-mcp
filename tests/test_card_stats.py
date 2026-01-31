@@ -195,3 +195,112 @@ class TestProblemCards:
         card = cards[0]
         assert card['factor'] == 1500  # Low ease
         assert card['lapses'] == 5  # High lapses
+
+
+class TestGetCardStats:
+    """Tests for the get_card_stats tool functionality."""
+
+    async def test_get_card_stats_basic(self, anki_client, test_deck_name):
+        """Test getting card stats for cards matching a query."""
+        # Create deck and add cards
+        await anki_client.create_deck(test_deck_name)
+
+        fields1 = {"Front": "What is Python?", "Back": "A programming language"}
+        fields2 = {"Front": "What is JavaScript?", "Back": "A web scripting language"}
+        await anki_client.add_note(test_deck_name, "Basic", fields1, tags=["programming"])
+        await anki_client.add_note(test_deck_name, "Basic", fields2, tags=["programming"])
+
+        # Find cards
+        card_ids = await anki_client.find_cards(f'deck:"{test_deck_name}"')
+        assert len(card_ids) >= 2
+
+        # Get card info
+        cards = await anki_client.cards_info(card_ids[:10])
+        assert len(cards) >= 2
+
+        # Check structure
+        for card in cards:
+            assert 'cardId' in card
+            assert 'deckName' in card
+            assert 'factor' in card
+            assert 'interval' in card
+            assert 'lapses' in card
+            assert 'reps' in card
+            assert 'queue' in card
+            assert 'type' in card
+            assert 'due' in card
+            assert 'note' in card
+
+    async def test_get_card_stats_with_limit(self, anki_client, test_deck_name):
+        """Test that limit parameter works correctly."""
+        # Create deck and add multiple cards
+        await anki_client.create_deck(test_deck_name)
+
+        for i in range(5):
+            fields = {"Front": f"Question {i}", "Back": f"Answer {i}"}
+            await anki_client.add_note(test_deck_name, "Basic", fields)
+
+        # Find cards with limit
+        card_ids = await anki_client.find_cards(f'deck:"{test_deck_name}"')
+        assert len(card_ids) >= 5
+
+        # Apply limit
+        limited_ids = card_ids[:3]
+        cards = await anki_client.cards_info(limited_ids)
+        assert len(cards) == 3
+
+    async def test_get_card_stats_empty_query(self, anki_client):
+        """Test getting card stats with a query that matches nothing."""
+        card_ids = await anki_client.find_cards("deck:NonexistentDeckXYZ123")
+        assert len(card_ids) == 0
+
+    async def test_get_card_stats_with_problem_card(self, anki_client, mock_anki_server, test_deck_name):
+        """Test getting stats for problem cards with specific values."""
+        # Add a problem card with known values
+        card_id = mock_anki_server.add_problem_card(
+            test_deck_name,
+            low_ease=True,
+            high_lapses=True
+        )
+
+        cards = await anki_client.cards_info([card_id])
+        assert len(cards) == 1
+
+        card = cards[0]
+        # Verify problem card stats
+        assert card['factor'] == 1500  # Low ease (1.5 or 150%)
+        assert card['lapses'] == 5  # High lapses
+        assert card['cardId'] == card_id
+        assert card['deckName'] == test_deck_name
+
+    async def test_get_card_stats_includes_reps(self, anki_client, test_deck_name):
+        """Test that reps (total reviews) field is included."""
+        await anki_client.create_deck(test_deck_name)
+
+        fields = {"Front": "Reps Test", "Back": "Answer"}
+        await anki_client.add_note(test_deck_name, "Basic", fields)
+
+        card_ids = await anki_client.find_cards(f'deck:"{test_deck_name}"')
+        cards = await anki_client.cards_info(card_ids)
+
+        assert len(cards) >= 1
+        assert 'reps' in cards[0]
+        assert isinstance(cards[0]['reps'], int)
+
+    async def test_get_card_stats_card_type_values(self, anki_client, test_deck_name):
+        """Test that card type values are valid."""
+        await anki_client.create_deck(test_deck_name)
+
+        fields = {"Front": "Type Test", "Back": "Answer"}
+        await anki_client.add_note(test_deck_name, "Basic", fields)
+
+        card_ids = await anki_client.find_cards(f'deck:"{test_deck_name}"')
+        cards = await anki_client.cards_info(card_ids)
+
+        assert len(cards) >= 1
+        card = cards[0]
+
+        # Type should be 0 (new), 1 (learning), 2 (review), or 3 (relearning)
+        assert card['type'] in [0, 1, 2, 3]
+        # Queue should be valid value
+        assert card['queue'] in [-3, -2, -1, 0, 1, 2, 3, 4]
