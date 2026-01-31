@@ -28,9 +28,11 @@ class MockCard:
     factor: int = 2500  # Ease factor in permille (2500 = 250%)
     interval: int = 0
     lapses: int = 0
+    reps: int = 0  # Total number of reviews
     queue: int = 0  # 0=new, 1=learning, 2=review
     type: int = 0
     due: int = 0
+    mod: int = 0  # Modification timestamp
     suspended: bool = False
     buried: bool = False
 
@@ -490,9 +492,11 @@ class MockAnkiConnect:
                     "factor": card.factor,
                     "interval": card.interval,
                     "lapses": card.lapses,
+                    "reps": card.reps,
                     "queue": card.queue,
                     "type": card.type,
                     "due": card.due,
+                    "mod": card.mod,
                     "modelName": note.model_name if note else "Basic",
                 })
 

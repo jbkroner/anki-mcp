@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from datetime import datetime
 from typing import Optional
 
 from mcp.server import Server
@@ -496,6 +497,25 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": []
+            }
+        ),
+        Tool(
+            name="get_card_stats",
+            description="Get detailed statistics for specific cards matching a search query. Returns comprehensive data including ease factor, interval, lapses, review count, and card content. Useful for debugging difficult cards or investigating specific vocabulary struggles.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Anki search query to find cards (e.g., 'deck:Spanish', 'tag:verb', 'front:*hello*')"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of cards to return (default: 10)",
+                        "default": 10
+                    }
+                },
+                "required": ["query"]
             }
         ),
     ]
@@ -1424,6 +1444,112 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 f"Trend (comparing halves): {trend_str}",
                 f"Total reviews: {sum(d[1] for d in review_history)}",
             ])
+
+            return [TextContent(
+                type="text",
+                text="\n".join(result_parts)
+            )]
+
+        elif name == "get_card_stats":
+            query = arguments["query"]
+            limit = arguments.get("limit", 10)
+
+            # Find cards matching the query
+            card_ids = await anki.find_cards(query)
+
+            if not card_ids:
+                return [TextContent(
+                    type="text",
+                    text=f"No cards found matching: {query}"
+                )]
+
+            # Limit results
+            card_ids = card_ids[:limit]
+
+            # Get detailed card information
+            cards = await anki.cards_info(card_ids)
+
+            if not cards:
+                return [TextContent(
+                    type="text",
+                    text=f"Could not retrieve card information for query: {query}"
+                )]
+
+            # Get note information for content (front/back)
+            note_ids = list(set(card.get('note') for card in cards if card.get('note')))
+            notes = await anki.notes_info(note_ids) if note_ids else []
+
+            # Create note_id -> content mapping
+            note_content_map = {}
+            for note in notes:
+                note_id = note.get('noteId')
+                fields = note.get('fields', {})
+                # Extract front/back or other fields
+                field_parts = []
+                for field_name, field_data in fields.items():
+                    value = field_data.get('value', '')
+                    # Clean HTML tags
+                    value = re.sub(r'<[^>]+>', '', value)
+                    value = value.replace('&nbsp;', ' ').strip()
+                    if value:
+                        field_parts.append(f"{field_name}: {value[:100]}")
+                note_content_map[note_id] = " | ".join(field_parts)
+
+            # Card type mapping
+            card_type_names = {
+                0: "New",
+                1: "Learning",
+                2: "Review",
+                3: "Relearning"
+            }
+
+            # Queue status mapping
+            queue_names = {
+                -1: "Suspended",
+                -2: "Sibling buried",
+                -3: "Manually buried",
+                0: "New",
+                1: "Learning",
+                2: "Review",
+                3: "Day learning",
+                4: "Preview"
+            }
+
+            # Format results
+            result_parts = [f"Card Statistics for query '{query}' ({len(cards)} cards):\n"]
+
+            for card in cards:
+                card_id = card.get('cardId')
+                note_id = card.get('note')
+                deck_name = card.get('deckName', 'Unknown')
+                ease = card.get('factor', 0) / 1000  # Convert from permille
+                interval = card.get('interval', 0)
+                lapses = card.get('lapses', 0)
+                reps = card.get('reps', 0)
+                card_type = card_type_names.get(card.get('type', 0), 'Unknown')
+                queue = queue_names.get(card.get('queue', 0), 'Unknown')
+                due = card.get('due', 0)
+                mod = card.get('mod', 0)
+
+                # Get content from note
+                content = note_content_map.get(note_id, 'Unknown')
+                if len(content) > 80:
+                    content = content[:77] + "..."
+
+                result_parts.append(f"Card ID: {card_id}")
+                result_parts.append(f"  Deck: {deck_name}")
+                result_parts.append(f"  Content: {content}")
+                result_parts.append(f"  Type: {card_type} | Queue: {queue}")
+                result_parts.append(f"  Ease: {ease:.2f} ({ease * 100:.0f}%)")
+                result_parts.append(f"  Interval: {interval} days")
+                result_parts.append(f"  Lapses: {lapses}")
+                result_parts.append(f"  Total reviews: {reps}")
+                result_parts.append(f"  Due: {due}")
+                if mod > 0:
+                    # mod is Unix timestamp - format it
+                    last_modified = datetime.fromtimestamp(mod).strftime('%Y-%m-%d %H:%M')
+                    result_parts.append(f"  Last modified: {last_modified}")
+                result_parts.append("")
 
             return [TextContent(
                 type="text",
