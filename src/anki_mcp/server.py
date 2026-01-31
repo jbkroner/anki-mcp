@@ -769,23 +769,43 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
             problem_cards = []
 
+            # Helper function to get note field content
+            async def get_note_content(note_ids: list[int]) -> dict[int, str]:
+                """Fetch note info and return a mapping of note_id to field content."""
+                if not note_ids:
+                    return {}
+                notes = await anki.notes_info(note_ids)
+                content_map = {}
+                for note in notes:
+                    note_id = note.get('noteId')
+                    fields = note.get('fields', {})
+                    # Get field values (typically Front/Back for Basic cards)
+                    field_values = [f"{k}: {v.get('value', '')[:50]}" for k, v in fields.items()]
+                    content_map[note_id] = " | ".join(field_values)
+                return content_map
+
             # Find cards with low ease (factor < 2000 means ease < 200% or 2.0)
             if criteria in ("low_ease", "all"):
                 query = f"{base_query} prop:ease<2".strip()
                 low_ease_ids = await anki.find_cards(query)
                 if low_ease_ids:
                     cards_info = await anki.cards_info(low_ease_ids[:limit])
+                    # Get note content for these cards
+                    note_ids = [card.get('note') for card in cards_info if card.get('note')]
+                    note_content = await get_note_content(note_ids)
+
                     for card in cards_info:
                         ease = card.get('factor', 0) / 1000  # Convert from permille
+                        note_id = card.get('note')
                         problem_cards.append({
                             'card_id': card.get('cardId'),
-                            'note_id': card.get('note'),
+                            'note_id': note_id,
                             'deck': card.get('deckName'),
                             'issue': 'low_ease',
                             'ease': ease,
                             'lapses': card.get('lapses', 0),
                             'interval': card.get('interval', 0),
-                            'question': card.get('question', '')[:80]
+                            'content': note_content.get(note_id, 'Unknown')[:80]
                         })
 
             # Find cards with high lapses (4 or more)
@@ -799,17 +819,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
                     if new_ids:
                         cards_info = await anki.cards_info(new_ids[:limit])
+                        # Get note content for these cards
+                        note_ids = [card.get('note') for card in cards_info if card.get('note')]
+                        note_content = await get_note_content(note_ids)
+
                         for card in cards_info:
                             ease = card.get('factor', 0) / 1000
+                            note_id = card.get('note')
                             problem_cards.append({
                                 'card_id': card.get('cardId'),
-                                'note_id': card.get('note'),
+                                'note_id': note_id,
                                 'deck': card.get('deckName'),
                                 'issue': 'high_lapses',
                                 'ease': ease,
                                 'lapses': card.get('lapses', 0),
                                 'interval': card.get('interval', 0),
-                                'question': card.get('question', '')[:80]
+                                'content': note_content.get(note_id, 'Unknown')[:80]
                             })
 
             # Limit total results
@@ -827,19 +852,18 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result_parts = [f"Found {len(problem_cards)} problem cards{deck_str}:\n"]
 
             for card in problem_cards:
-                # Clean HTML from question
-                question = card['question'].replace('<br>', ' ').replace('<br/>', ' ')
+                # Clean HTML from content
+                content = card['content'].replace('<br>', ' ').replace('<br/>', ' ')
                 # Simple HTML tag removal
-                import re
-                question = re.sub(r'<[^>]+>', '', question)
-                question = question[:60] + "..." if len(question) > 60 else question
+                content = re.sub(r'<[^>]+>', '', content)
+                content = content[:60] + "..." if len(content) > 60 else content
 
                 issue_str = "low ease" if card['issue'] == 'low_ease' else "high lapses"
                 result_parts.append(
                     f"- [{issue_str}] ease={card['ease']:.2f}, lapses={card['lapses']}, "
                     f"interval={card['interval']}d"
                 )
-                result_parts.append(f"  Q: {question}")
+                result_parts.append(f"  {content}")
                 result_parts.append(f"  Card ID: {card['card_id']} | Deck: {card['deck']}")
                 result_parts.append("")
 
