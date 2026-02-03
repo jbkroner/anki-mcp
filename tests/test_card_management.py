@@ -201,3 +201,87 @@ class TestScheduling:
         # Get ease factor
         ease_factors = await anki_client.get_ease_factors([card_id])
         assert ease_factors[0] == 1500  # Low ease is 1500 (150%)
+
+
+class TestCardContentRetrieval:
+    """Tests for issue #9: Ensure card functions return actual content, not CSS."""
+
+    async def test_suspended_cards_returns_actual_content(self, anki_client, mock_anki_server, test_deck_name):
+        """Test that get_suspended_cards returns actual card content, not CSS styling."""
+        # Add a suspended card with known content
+        card_id = mock_anki_server.add_suspended_card(test_deck_name)
+
+        # Get the card info to verify the content exists
+        cards = await anki_client.cards_info([card_id])
+        assert len(cards) == 1
+
+        # Get the note content
+        note_id = cards[0].get('note')
+        notes = await anki_client.notes_info([note_id])
+        assert len(notes) == 1
+
+        # Verify note has proper fields (not CSS)
+        fields = notes[0].get('fields', {})
+        assert 'Front' in fields
+        assert 'Back' in fields
+
+        front_value = fields['Front'].get('value', '')
+        back_value = fields['Back'].get('value', '')
+
+        # Content should NOT contain CSS styling
+        assert '.card' not in front_value
+        assert 'font-family' not in front_value
+        assert '.card' not in back_value
+
+        # Content SHOULD contain actual text
+        assert 'Suspended Q' in front_value
+        assert 'Suspended A' in back_value
+
+    async def test_due_cards_returns_actual_content(self, anki_client, mock_anki_server, test_deck_name):
+        """Test that get_due_cards returns actual card content, not CSS styling."""
+        # Add a due card with known content
+        card_id = mock_anki_server.add_due_card(test_deck_name)
+
+        # Get the card info
+        cards = await anki_client.cards_info([card_id])
+        assert len(cards) == 1
+
+        # Get the note content
+        note_id = cards[0].get('note')
+        notes = await anki_client.notes_info([note_id])
+        assert len(notes) == 1
+
+        # Verify note has proper fields (not CSS)
+        fields = notes[0].get('fields', {})
+        assert 'Front' in fields
+        assert 'Back' in fields
+
+        front_value = fields['Front'].get('value', '')
+        back_value = fields['Back'].get('value', '')
+
+        # Content should NOT contain CSS styling
+        assert '.card' not in front_value
+        assert 'font-family' not in front_value
+        assert '.card' not in back_value
+
+        # Content SHOULD contain actual text
+        assert 'Due Q' in front_value
+        assert 'Due A' in back_value
+
+    async def test_notes_info_returns_field_values(self, anki_client, test_deck_name):
+        """Test that notes_info returns actual field values."""
+        await anki_client.create_deck(test_deck_name)
+
+        # Add a note with specific content
+        fields = {"Front": "Test Question Content", "Back": "Test Answer Content"}
+        note_id = await anki_client.add_note(test_deck_name, "Basic", fields)
+
+        # Get note info
+        notes = await anki_client.notes_info([note_id])
+        assert len(notes) == 1
+
+        note_fields = notes[0].get('fields', {})
+
+        # Verify exact content is returned
+        assert note_fields['Front']['value'] == "Test Question Content"
+        assert note_fields['Back']['value'] == "Test Answer Content"
