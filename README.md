@@ -2,6 +2,8 @@
 
 A Model Context Protocol (MCP) server that connects Claude Desktop to your local Anki instance via AnkiConnect. Enables Claude to create, manage, and search flashcards directly in your Anki decks.
 
+> **Note:** While this MCP works with any Anki collection, many features and examples are geared towards Spanish language learning.
+
 ## Features
 
 - **Health Check**: Verify Anki and AnkiConnect are running
