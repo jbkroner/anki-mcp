@@ -10,6 +10,10 @@ A Model Context Protocol (MCP) server that connects Claude Desktop to your local
 - **Cloze Deletions**: Create cloze deletion cards for sentence learning
 - **Search**: Find existing notes using Anki's search syntax
 - **Sync**: Trigger AnkiWeb synchronization
+- **Statistics & Analytics**: Deck stats, collection overview, study streaks, retention metrics, learning curves
+- **Card Management**: Suspend/unsuspend cards, update content, delete notes, move cards between decks, manage tags
+- **Problem Detection**: Identify struggling cards with low ease or high lapse counts
+- **Scheduling Control**: View due cards, reset card progress, adjust ease factors
 - **Spanish Helpers**: Built-in utilities for formatting Spanish vocabulary cards
 
 ## Prerequisites
@@ -225,6 +229,270 @@ Synchronize the local collection with AnkiWeb.
 User: "Sync my Anki collection"
 Claude: [Uses sync_anki]
 ```
+
+---
+
+## Statistics & Analytics Tools
+
+### `get_deck_stats`
+
+Get statistics for a specific deck including new, learning, and review card counts.
+
+**Parameters:**
+- `deck` (required): Deck name to get statistics for
+
+**Example:**
+```
+User: "How many cards are in my Spanish deck?"
+Claude: [Uses get_deck_stats with deck="Spanish"]
+```
+
+### `get_collection_stats`
+
+Get overall collection statistics including cards reviewed today, review history, and totals across all decks.
+
+**Example:**
+```
+User: "Give me an overview of my Anki stats"
+Claude: [Uses get_collection_stats]
+```
+
+### `get_card_stats`
+
+Get detailed statistics for specific cards matching a search query. Returns comprehensive data including ease factor, interval, lapses, review count, and card content.
+
+**Parameters:**
+- `query` (required): Anki search query (e.g., "deck:Spanish", "tag:verb")
+- `limit` (optional): Maximum cards to return (default: 10)
+
+**Example:**
+```
+User: "Show me detailed stats for my verb cards"
+Claude: [Uses get_card_stats with query="tag:verb"]
+```
+
+### `get_problem_cards`
+
+Find cards that may need attention: low ease factor, high lapse count. Useful for identifying struggling cards.
+
+**Parameters:**
+- `deck` (optional): Deck name to filter
+- `criteria` (optional): "low_ease", "high_lapses", or "all" (default: "all")
+- `limit` (optional): Maximum cards to return (default: 20)
+
+**Example:**
+```
+User: "Which cards am I struggling with?"
+Claude: [Uses get_problem_cards]
+```
+
+### `get_review_history`
+
+Get review history for a deck showing recent reviews and their outcomes (Again/Hard/Good/Easy).
+
+**Parameters:**
+- `deck` (required): Deck name
+- `limit` (optional): Maximum reviews to return (default: 100)
+
+**Example:**
+```
+User: "How have my Spanish reviews been going?"
+Claude: [Uses get_review_history with deck="Spanish"]
+```
+
+### `get_retention_stats`
+
+Calculate retention metrics for a deck based on review history. Shows success rate and lapse patterns.
+
+**Parameters:**
+- `deck` (optional): Deck name to filter
+- `days` (optional): Number of days to analyze (default: 30)
+
+**Example:**
+```
+User: "What's my retention rate for the past month?"
+Claude: [Uses get_retention_stats with days=30]
+```
+
+### `get_study_streak`
+
+Calculate your study streak - consecutive days with at least one review.
+
+**Example:**
+```
+User: "What's my current study streak?"
+Claude: [Uses get_study_streak]
+```
+
+### `get_learning_curve`
+
+Analyze learning progress over time showing review counts, retention, and workload trends.
+
+**Parameters:**
+- `days` (optional): Number of days to analyze (default: 30)
+
+**Example:**
+```
+User: "Show me my learning progress over the past month"
+Claude: [Uses get_learning_curve with days=30]
+```
+
+---
+
+## Card State Management Tools
+
+### `suspend_cards`
+
+Suspend cards to exclude them from reviews. Suspended cards won't appear in study sessions.
+
+**Parameters:**
+- `card_ids` (optional): List of card IDs to suspend
+- `query` (optional): Anki search query to find cards to suspend
+
+**Example:**
+```
+User: "Suspend all cards tagged 'difficult' for now"
+Claude: [Uses suspend_cards with query="tag:difficult"]
+```
+
+### `unsuspend_cards`
+
+Unsuspend cards to include them in reviews again.
+
+**Parameters:**
+- `card_ids` (optional): List of card IDs to unsuspend
+- `query` (optional): Anki search query to find cards to unsuspend
+
+**Example:**
+```
+User: "Unsuspend my difficult cards, I'm ready to review them"
+Claude: [Uses unsuspend_cards with query="tag:difficult is:suspended"]
+```
+
+### `get_suspended_cards`
+
+List all suspended cards, optionally filtered by deck.
+
+**Parameters:**
+- `deck` (optional): Deck name to filter
+- `limit` (optional): Maximum cards to return (default: 50)
+
+**Example:**
+```
+User: "Show me which cards are suspended"
+Claude: [Uses get_suspended_cards]
+```
+
+### `get_due_cards`
+
+Find cards that are due for review.
+
+**Parameters:**
+- `deck` (optional): Deck name to filter
+- `limit` (optional): Maximum cards to return (default: 50)
+
+**Example:**
+```
+User: "What cards are due for review today?"
+Claude: [Uses get_due_cards]
+```
+
+---
+
+## Content Management Tools
+
+### `update_note`
+
+Update the content of an existing note's fields.
+
+**Parameters:**
+- `note_id` (required): The note ID to update
+- `fields` (required): Dictionary of field names to new values
+
+**Example:**
+```
+User: "Update note 1234567890 - change the back to 'nuevo significado'"
+Claude: [Uses update_note with note_id=1234567890, fields={"Back": "nuevo significado"}]
+```
+
+### `delete_notes`
+
+Permanently delete notes and all their associated cards. This action cannot be undone!
+
+**Parameters:**
+- `note_ids` (required): List of note IDs to delete
+- `confirm` (required): Must be true to confirm deletion
+
+**Example:**
+```
+User: "Delete notes 123 and 456, I confirm"
+Claude: [Uses delete_notes with note_ids=[123, 456], confirm=true]
+```
+
+### `move_cards`
+
+Move cards to a different deck.
+
+**Parameters:**
+- `card_ids` (optional): List of card IDs to move
+- `query` (optional): Anki search query to find cards to move
+- `target_deck` (required): Destination deck name
+
+**Example:**
+```
+User: "Move all cards tagged 'advanced' to Spanish::Advanced"
+Claude: [Uses move_cards with query="tag:advanced", target_deck="Spanish::Advanced"]
+```
+
+### `remove_tags`
+
+Remove tags from notes.
+
+**Parameters:**
+- `note_ids` (optional): List of note IDs
+- `query` (optional): Anki search query to find notes
+- `tags` (required): List of tags to remove
+
+**Example:**
+```
+User: "Remove the 'new' tag from all my Spanish cards"
+Claude: [Uses remove_tags with query="deck:Spanish", tags=["new"]]
+```
+
+---
+
+## Scheduling Tools
+
+### `reset_card_progress`
+
+Reset cards to 'new' state, removing all review history. Useful for relearning material.
+
+**Parameters:**
+- `card_ids` (optional): List of card IDs to reset
+- `query` (optional): Anki search query to find cards to reset
+- `confirm` (required): Must be true to confirm reset
+
+**Example:**
+```
+User: "Reset my verb conjugation cards, I want to relearn them"
+Claude: [Uses reset_card_progress with query="tag:conjugation", confirm=true]
+```
+
+### `set_ease_factor`
+
+Adjust the ease factor for cards. Higher ease = longer intervals between reviews.
+
+**Parameters:**
+- `card_ids` (required): List of card IDs
+- `ease` (required): New ease factor in permille (e.g., 2500 = 250%). Range: 1300-5000 recommended.
+
+**Example:**
+```
+User: "These cards are too easy, increase the ease factor to 300%"
+Claude: [Uses set_ease_factor with card_ids=[...], ease=3000]
+```
+
+---
 
 ## Usage Examples
 
