@@ -961,13 +961,31 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             card_ids = card_ids[:limit]
             cards = await anki.cards_info(card_ids)
 
+            # Get note content for actual card text (not CSS styling)
+            note_ids = [card.get('note') for card in cards if card.get('note')]
+            notes = await anki.notes_info(note_ids) if note_ids else []
+            note_content_map = {}
+            for note in notes:
+                note_id = note.get('noteId')
+                fields = note.get('fields', {})
+                field_values = []
+                for field_name, field_data in fields.items():
+                    value = field_data.get('value', '')
+                    value = re.sub(r'<[^>]+>', '', value)
+                    value = value.replace('&nbsp;', ' ').strip()
+                    if value:
+                        field_values.append(f"{field_name}: {value[:50]}")
+                note_content_map[note_id] = " | ".join(field_values)
+
             deck_str = f" in '{deck}'" if deck else ""
             result_parts = [f"Found {len(cards)} suspended cards{deck_str}:\n"]
 
             for card in cards:
-                question = card.get('question', '')[:60]
-                question = re.sub(r'<[^>]+>', '', question)
-                result_parts.append(f"- Card ID {card.get('cardId')}: {question}")
+                note_id = card.get('note')
+                content = note_content_map.get(note_id, 'Unknown')
+                if len(content) > 60:
+                    content = content[:57] + "..."
+                result_parts.append(f"- Card ID {card.get('cardId')}: {content}")
                 result_parts.append(f"  Deck: {card.get('deckName')}")
 
             return [TextContent(
@@ -1082,15 +1100,32 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             card_ids = card_ids[:limit]
             cards = await anki.cards_info(card_ids)
 
+            # Get note content for actual card text (not CSS styling)
+            note_ids = [card.get('note') for card in cards if card.get('note')]
+            notes = await anki.notes_info(note_ids) if note_ids else []
+            note_content_map = {}
+            for note in notes:
+                note_id = note.get('noteId')
+                fields = note.get('fields', {})
+                field_values = []
+                for field_name, field_data in fields.items():
+                    value = field_data.get('value', '')
+                    value = re.sub(r'<[^>]+>', '', value)
+                    value = value.replace('&nbsp;', ' ').strip()
+                    if value:
+                        field_values.append(f"{field_name}: {value[:50]}")
+                note_content_map[note_id] = " | ".join(field_values)
+
             deck_str = f" in '{deck}'" if deck else ""
             result_parts = [f"Found {len(cards)} cards due for review{deck_str}:\n"]
 
             for card in cards:
-                question = card.get('question', '')[:50]
-                question = re.sub(r'<[^>]+>', '', question)
+                note_id = card.get('note')
+                content = note_content_map.get(note_id, 'Unknown')
+                if len(content) > 50:
+                    content = content[:47] + "..."
                 interval = card.get('interval', 0)
-                due = card.get('due', 0)
-                result_parts.append(f"- {question}")
+                result_parts.append(f"- {content}")
                 result_parts.append(f"  Card ID: {card.get('cardId')} | Interval: {interval}d | Deck: {card.get('deckName')}")
 
             return [TextContent(
